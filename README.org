@@ -128,8 +128,12 @@ docker compose down -v     # also delete the model volume (re-pull next time)
 #+end_src
 
 * Roadmap
+- [X] Infrastructure Setup (Docker Compose)
+- [X] API Gateway & Routing (LiteLLM)
 - [ ] RAG: =pgvector/pgvector:pg16= Postgres + an embedding model in =litellm_config.yaml= (also enables virtual keys / spend tracking).
 - [ ] Observability: Langfuse tracing via LiteLLM callbacks.
+- [ ] The MCP (Model Context Protocol) Integration: interacting with Vector Database
+- [ ] CI/CD Pipeline (GitHub Actions): Automate testing
 - [ ] Pin image tags by digest for bit-for-bit reproducibility.
 
 * Troubleshooting
