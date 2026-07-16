@@ -17,8 +17,8 @@ Run open-source LLMs on the local AMD GPU and expose them behind a single, stand
   - [[#how-to-deploy][How to deploy]]
   - [[#using-the-api][Using the API]]
   - [[#teardown][Teardown]]
+  - [[#troubleshooting][Troubleshooting]]
 - [[#roadmap][Roadmap]]
-- [[#troubleshooting][Troubleshooting]]
 
 * Project Overview
 Two containers, two jobs:
@@ -127,6 +127,11 @@ docker compose down        # stop + remove containers (keeps the model volume)
 docker compose down -v     # also delete the model volume (re-pull next time)
 #+end_src
 
+** Troubleshooting
+- *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
+- *Ollama is slow / CPU-only:* the GPU device nodes are not reachable. Check =docker compose logs ollama= for a GPU line; if absent, confirm the active docker context is the native =default= engine.
+- *=permission denied= on a render node:* add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
+
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
 - [X] API Gateway & Routing (LiteLLM)
@@ -136,7 +141,3 @@ docker compose down -v     # also delete the model volume (re-pull next time)
 - [ ] CI/CD Pipeline (GitHub Actions): Automate testing
 - [ ] Pin image tags by digest for bit-for-bit reproducibility.
 
-* Troubleshooting
-- *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
-- *Ollama is slow / CPU-only:* the GPU device nodes are not reachable. Check =docker compose logs ollama= for a GPU line; if absent, confirm the active docker context is the native =default= engine.
-- *=permission denied= on a render node:* add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
