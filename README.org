@@ -1,0 +1,139 @@
+#+title: Local LLM Hub
+#+subtitle: Local, containerized AI infrastructure — Ollama + LiteLLM
+#+author: Twilight4
+#+date: [2026-07-16 Wed]
+#+options: toc:3 num:nil ^:nil
+#+property: header-args :exports code
+
+Run open-source LLMs on the local AMD GPU and expose them behind a single, standardized, OpenAI-compatible API protected by a master key. Everything runs in Docker, on =127.0.0.1= only.
+
+* Table of Contents
+- [[*Overview][Overview]]
+- [[*Architecture][Architecture]]
+- [[*Project Structure][Project Structure]]
+- [[*Tech Stack][Tech Stack]]
+- [[*Scope][Scope]]
+- [[*Prerequisites][Prerequisites]]
+- [[*Step-by-step Setup][Step-by-step Setup]]
+- [[*Using the API][Using the API]]
+- [[*GPU Notes (AMD RDNA4 / Vulkan)][GPU Notes (AMD RDNA4 / Vulkan)]]
+- [[*Teardown][Teardown]]
+- [[*Roadmap][Roadmap]]
+- [[*Troubleshooting][Troubleshooting]]
+
+* Project Overview
+Two containers, two jobs:
+
+- *Ollama* — the engine. Downloads and runs the model on the GPU; speaks its own API on port 11434.
+- *LiteLLM* — the gateway. Exposes the standard OpenAI API on port 4000, translates to Ollama's format, and enforces a *master API key*.
+
+Why both? Ollama alone already gives an OpenAI-ish API. LiteLLM's value is the
+*standardized gateway*: later you can put cloud models and a vector database behind
+the *same* endpoint, add per-app keys, and track usage. Build the front desk once;
+swap the engines behind it forever.
+
+** Architecture
+#+begin_example
+you / your apps ──Bearer sk-…──▶ LiteLLM :4000 ──▶ Ollama :11434 ──▶ AMD GPU (Vulkan)
+                                (gateway)         (LLM engine)        RX 9070 XT / 780M
+#+end_example
+Both ports bind to =127.0.0.1= — nothing is exposed beyond the host.
+
+** Directory Structure
+#+begin_example
+local-llm-hub/
+├── README.org            this file
+├── docker-compose.yml    the two services, GPU hand-off, healthchecks
+├── litellm_config.yaml   maps a friendly model name to the Ollama instance
+├── .env.example          committed template for secrets + pinned tags
+└── .env                  REAL secrets + tags — gitignored, never committed
+#+end_example
+
+** Tech Stack
+| Layer         | Tool                        | Version |
+|---------------+-----------------------------+---------|
+| LLM engine    | Ollama                      | 0.32.0  |
+| API gateway   | LiteLLM proxy               | v1.92.0 |
+| Orchestration | Docker Compose              | v2      |
+| GPU backend   | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
+| Model         | Llama 3.2 (3B, default tag) | —       |
+
+* Deploy Infrastructure
+** Prerequisites
+- *Docker, native engine.* The active context must be =default= — Docker Desktop's VM-backed runtime does not pass the GPU through reliably:
+  #+begin_src bash
+  docker context show    # expect: default
+  #+end_src
+- *AMD GPU with the Vulkan driver* on the host (=vulkan-radeon=, part of =mesa=). On Garuda/Arch this ships by default.
+- *Device nodes* =/dev/dri= and =/dev/kfd= present (they are on this host).
+- *Disk:* ~3 GB for the images + ~2 GB for the model.
+
+** Step-by-step Setup
+1. *Create your secrets file* from the template:
+   #+begin_src bash
+   cd local-llm-hub/
+   cp .env.example .env
+   #+end_src
+
+2. *Generate the master + salt keys* and paste them into =.env= (prefix each with =sk-=):
+   #+begin_src bash
+   openssl rand -hex 32     # -> LITELLM_MASTER_KEY=sk-<hex>
+   openssl rand -hex 32     # -> LITELLM_SALT_KEY=sk-<hex>
+   #+end_src
+   =.env= is gitignored — it is never committed.
+
+3. *Start the stack* (pulls the images on first run):
+   #+begin_src bash
+   docker compose up -d
+   #+end_src
+
+4. *Wait for both services to be healthy:*
+   #+begin_src bash
+   docker compose ps       # both show (healthy)
+   #+end_src
+
+5. *Download the model* (one-time, ~2 GB, persisted in a named volume):
+   #+begin_src bash
+   docker compose exec ollama ollama pull llama3.2
+   #+end_src
+   Note: =llama3.2='s default tag is the 3B model — small and fast, ideal for learning.
+
+6. *Test it* — see [[*Using the API][Using the API]].
+
+** Using the API
+The gateway is OpenAI-compatible. Authenticate with the master key from =.env=.
+#+begin_src bash
+# Positive path — a real completion
+curl -s http://127.0.0.1:4000/v1/chat/completions \
+  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"reply with one word: pong"}]}'
+
+# Negative path — wrong key -> HTTP 401
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/chat/completions \
+  -H "Authorization: Bearer wrong" -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}'
+#+end_src
+
+Any OpenAI-compatible client works — point =base_url= at =http://127.0.0.1:4000/v1= and use the master key.
+
+Confirm the GPU is doing the work:
+#+begin_src bash
+docker compose logs ollama | grep -iE 'gpu|vulkan|amd'    # i.e. AMD Radeon RX 9070 XT (RADV GFX1201)
+#+end_src
+
+** Teardown
+#+begin_src bash
+docker compose down        # stop + remove containers (keeps the model volume)
+docker compose down -v     # also delete the model volume (re-pull next time)
+#+end_src
+
+* Roadmap
+- [ ] RAG: =pgvector/pgvector:pg16= Postgres + an embedding model in =litellm_config.yaml= (also enables virtual keys / spend tracking).
+- [ ] Observability: Langfuse tracing via LiteLLM callbacks.
+- [ ] Pin image tags by digest for bit-for-bit reproducibility.
+
+* Troubleshooting
+- *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
+- *Ollama is slow / CPU-only:* the GPU device nodes are not reachable. Check =docker compose logs ollama= for a GPU line; if absent, confirm the active docker context is the native =default= engine.
+- *=permission denied= on a render node:* add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).

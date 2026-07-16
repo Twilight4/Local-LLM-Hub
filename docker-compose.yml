@@ -1,0 +1,48 @@
+# local-llm-hub — Phase 1: Ollama (LLM engine) + LiteLLM (OpenAI-compatible gateway).
+# Bring up:  docker compose up -d
+services:
+  ollama:
+    image: ollama/ollama:0.32.0            # pinned version, never "latest"
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"            # Ollama's own API, loopback only (debug/pull)
+    volumes:
+      - ollama-data:/root/.ollama          # named volume: downloaded models survive restarts
+    devices:                               # AMD GPU hand-off (uses the Vulkan backend)
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.92.0
+    container_name: litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+    ports:
+      - "127.0.0.1:4000:4000"              # THE single public entry point
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro   # bind-mount our config, read-only
+    env_file: [.env]                       # master key injected from here (gitignored)
+    depends_on:
+      ollama:
+        condition: service_healthy         # don't start LiteLLM until Ollama is ready
+    healthcheck:
+      # python ships in the litellm image; curl does not
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3)\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+
+volumes:
+  ollama-data:
+
+# Future phases (not built yet) — add under `profiles:`:
+#   rag (Phase 2):           postgres (pgvector) + an embedding model in litellm_config.yaml
+#   observability (Phase 3): langfuse tracing via litellm callbacks
