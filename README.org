@@ -7,19 +7,18 @@
 
 Run open-source LLMs on the local AMD GPU and expose them behind a single, standardized, OpenAI-compatible API protected by a master key. Everything runs in Docker, on =127.0.0.1= only.
 
-* Table of Contents
-- [[*Overview][Overview]]
-- [[*Architecture][Architecture]]
-- [[*Project Structure][Project Structure]]
-- [[*Tech Stack][Tech Stack]]
-- [[*Scope][Scope]]
-- [[*Prerequisites][Prerequisites]]
-- [[*Step-by-step Setup][Step-by-step Setup]]
-- [[*Using the API][Using the API]]
-- [[*GPU Notes (AMD RDNA4 / Vulkan)][GPU Notes (AMD RDNA4 / Vulkan)]]
-- [[*Teardown][Teardown]]
-- [[*Roadmap][Roadmap]]
-- [[*Troubleshooting][Troubleshooting]]
+* Table of Contents :toc:
+- [[#project-overview][Project Overview]]
+  - [[#architecture][Architecture]]
+  - [[#directory-structure][Directory Structure]]
+  - [[#tech-stack][Tech Stack]]
+- [[#deploy-infrastructure][Deploy Infrastructure]]
+  - [[#prerequisites][Prerequisites]]
+  - [[#how-to-deploy][How to deploy]]
+  - [[#using-the-api][Using the API]]
+  - [[#teardown][Teardown]]
+- [[#roadmap][Roadmap]]
+- [[#troubleshooting][Troubleshooting]]
 
 * Project Overview
 Two containers, two jobs:
@@ -68,7 +67,7 @@ local-llm-hub/
 - *Device nodes* =/dev/dri= and =/dev/kfd= present (they are on this host).
 - *Disk:* ~3 GB for the images + ~2 GB for the model.
 
-** Step-by-step Setup
+** How to deploy
 1. *Create your secrets file* from the template:
    #+begin_src bash
    cd local-llm-hub/
