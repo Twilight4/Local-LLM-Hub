@@ -63,9 +63,9 @@ local-llm-hub/
 ├── .env.example            committed template for secrets + pinned tags
 ├── .env                    REAL secrets — gitignored, never committed
 ├── rag/
-    ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
-    ├── ingest.py           chunk text → embed → upsert into Qdrant
-    └── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
+│   ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
+│   ├── ingest.py           chunk text → embed → upsert into Qdrant
+│   └── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
 └── assets/
     └── architecture.png   the architecture diagram (see Architecture)
 #+end_example
