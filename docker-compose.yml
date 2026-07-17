@@ -40,8 +40,26 @@ services:
       retries: 6
       start_period: 25s
 
+  qdrant:
+    image: qdrant/qdrant:v1.18.2          # pinned latest stable (2026-06)
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"             # REST + web dashboard
+      - "127.0.0.1:6334:6334"             # gRPC (faster for bulk upserts)
+    volumes:
+      - qdrant-data:/qdrant/storage       # collections + vectors persist here
+    healthcheck:                          # Qdrant image ships bash; if this errors, delete the block
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
 volumes:
   ollama-data:
+  qdrant-data:
 
 # Future phases (not built yet) — add under `profiles:`:
 #   rag (Phase 2):           postgres (pgvector) + an embedding model in litellm_config.yaml
