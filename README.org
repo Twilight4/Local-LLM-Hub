@@ -50,18 +50,8 @@ can keep forever while swapping engines behind it; Qdrant + MCP turns the LLM
 from "knows its training data" into "knows *your* data" — without retraining.
 
 ** Architecture
-#+begin_example
- chat   ─▶ LiteLLM :4000 ─▶ Ollama :11434 ─▶ AMD GPU (Vulkan, RX 9070 XT)
- embed  ─▶ LiteLLM :4000 ─▶ Ollama nomic-embed-text
-
- LiteLLM :4000 ──trace (OTel/OTLP)──▶ Phoenix :6006   (UI + traces)
-
- rag/ingest.py   ──embed + upsert──▶ Qdrant :6333  (collection "internal-docs")
-                                          ▲
- rag/mcp_server.py   tool: search-internal-docs ── query
-                        ▲
-                AI agent (OMP) ── calls the tool over MCP / stdio
-#+end_example
+#+caption: Local LLM Hub — request and tracing flow (every LiteLLM call is traced to Phoenix via OTel).
+[[file:assets/architecture.png]]
 All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
 
 ** Directory Structure
@@ -72,10 +62,12 @@ local-llm-hub/
 ├── litellm_config.yaml     maps model names (llama3.2, nomic-embed-text) to Ollama
 ├── .env.example            committed template for secrets + pinned tags
 ├── .env                    REAL secrets — gitignored, never committed
-└── rag/
+├── rag/
     ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
     ├── ingest.py           chunk text → embed → upsert into Qdrant
     └── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
+└── assets/
+    └── architecture.png   the architecture diagram (see Architecture)
 #+end_example
 
 ** Tech Stack
@@ -209,6 +201,7 @@ uv run rag/ingest.py README.org            # one file
 uv run rag/ingest.py ./some-docs-dir       # or a directory of .org / .md / .txt
 #+end_src
 Expect: =Upserted N chunks ... into 'internal-docs'=.
+
 Inspect visually in the Qdrant dashboard: http://127.0.0.1:6333/dashboard.
 
 ** The MCP tool
@@ -279,7 +272,7 @@ claude mcp add qdrant-docs -- uv run "$(pwd)/rag/mcp_server.py"
 #+end_src
 
 *Gotchas:*
-- *GUI app reports =uv not found=:* apps launched from the dock/app launcher (Claude Desktop, Cursor, VS Code, Windsurf) inherit a minimal =PATH= and can't see =uv=. Fix: use the *absolute* binary path (=command -v uv=, e.g. =~/.local/bin/uv=) in place of bare =uv=.
+- GUI app reports =uv not found=: apps launched from the dock/app launcher (Claude Desktop, Cursor, VS Code, Windsurf) inherit a minimal =PATH= and can't see =uv=. Fix: use the *absolute* binary path (=command -v uv=, e.g. =~/.local/bin/uv=) in place of bare =uv=.
 - *Config not picked up:* most clients read MCP config only at startup — fully quit and reopen the app (VS Code: *Developer: Reload Window*).
 - *Tool missing after registering:* run the server by hand to see the error:
   #+begin_src bash
