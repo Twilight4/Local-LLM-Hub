@@ -1,11 +1,14 @@
 #+title: Local LLM Hub
-#+subtitle: Local, containerized AI infrastructure — Ollama + LiteLLM
+#+subtitle: Local, containerized AI infrastructure — Ollama + LiteLLM + Qdrant (RAG over MCP)
 #+author: Twilight4
 #+date: [2026-07-16 Wed]
 #+options: toc:3 num:nil ^:nil
 #+property: header-args :exports code
 
-Run open-source LLMs on the local AMD GPU and expose them behind a single, standardized, OpenAI-compatible API protected by a master key. Everything runs in Docker, on =127.0.0.1= only.
+Run open-source LLMs on the local AMD GPU, expose them behind a single
+standardized, OpenAI-compatible API (master-key protected), and give an AI agent
+a *search tool* over your own documents via the Model Context Protocol (MCP).
+Everything runs in Docker, on =127.0.0.1= only.
 
 * Table of Contents :toc:
 - [[#project-overview][Project Overview]]
@@ -18,44 +21,69 @@ Run open-source LLMs on the local AMD GPU and expose them behind a single, stand
   - [[#using-the-api][Using the API]]
   - [[#teardown][Teardown]]
   - [[#troubleshooting][Troubleshooting]]
+- [[#retrieval-and-mcp][Retrieval and MCP]]
+  - [[#how-it-works][How it works]]
+  - [[#index-your-documents][Index your documents]]
+  - [[#the-mcp-tool][The MCP tool]]
+  - [[#register-in-a-coding-agent][Register in a coding agent]]
+  - [[#use-it-from-an-agent][Use it from an agent]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
-Two containers, two jobs:
+Three services plus a small retrieval layer:
 
 - *Ollama* — the engine. Downloads and runs the model on the GPU; speaks its own API on port 11434.
-- *LiteLLM* — the gateway. Exposes the standard OpenAI API on port 4000, translates to Ollama's format, and enforces a *master API key*.
+- *LiteLLM* — the gateway. Exposes the standard OpenAI API on port 4000 (chat *and* embeddings), translates to Ollama, and enforces a *master API key*.
+- *Qdrant* — the vector database. Stores embeddings of your documents for semantic search (port 6333).
 
-Why both? Ollama alone already gives an OpenAI-ish API. LiteLLM's value is the
-*standardized gateway*: later you can put cloud models and a vector database behind
-the *same* endpoint, add per-app keys, and track usage. Build the front desk once;
-swap the engines behind it forever.
+On top of those containers, a tiny Python *retrieval layer* (in =rag/=) does two
+things: an ingestion script embeds your text into Qdrant, and an *MCP server*
+exposes a =search-internal-docs= tool that an AI agent can call to query those
+documents.
+
+Why this shape? LiteLLM gives you one stable, OpenAI-compatible front door you
+can keep forever while swapping engines behind it; Qdrant + MCP turns the LLM
+from "knows its training data" into "knows *your* data" — without retraining.
 
 ** Architecture
 #+begin_example
-you / your apps ──Bearer sk-…──▶ LiteLLM :4000 ──▶ Ollama :11434 ──▶ AMD GPU (Vulkan)
-                                (gateway)         (LLM engine)        RX 9070 XT / 780M
+ chat   ─▶ LiteLLM :4000 ─▶ Ollama :11434 ─▶ AMD GPU (Vulkan, RX 9070 XT)
+ embed  ─▶ LiteLLM :4000 ─▶ Ollama nomic-embed-text
+
+ rag/ingest.py   ──embed + upsert──▶ Qdrant :6333  (collection "internal-docs")
+                                          ▲
+ rag/mcp_server.py   tool: search-internal-docs ── query
+                        ▲
+                AI agent (OMP) ── calls the tool over MCP / stdio
 #+end_example
-Both ports bind to =127.0.0.1= — nothing is exposed beyond the host.
+All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
 
 ** Directory Structure
 #+begin_example
 local-llm-hub/
-├── README.org            this file
-├── docker-compose.yml    the two services, GPU hand-off, healthchecks
-├── litellm_config.yaml   maps a friendly model name to the Ollama instance
-├── .env.example          committed template for secrets + pinned tags
-└── .env                  REAL secrets + tags — gitignored, never committed
+├── README.org              this file
+├── docker-compose.yml      ollama + litellm + qdrant, GPU hand-off, healthchecks
+├── litellm_config.yaml     maps model names (llama3.2, nomic-embed-text) to Ollama
+├── .env.example            committed template for secrets + pinned tags
+├── .env                    REAL secrets — gitignored, never committed
+└── rag/
+    ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
+    ├── ingest.py           chunk text → embed → upsert into Qdrant
+    └── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
 #+end_example
 
 ** Tech Stack
-| Layer         | Tool                        | Version |
-|---------------+-----------------------------+---------|
-| LLM engine    | Ollama                      | 0.32.0  |
-| API gateway   | LiteLLM proxy               | v1.92.0 |
-| Orchestration | Docker Compose              | v2      |
-| GPU backend   | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
-| Model         | Llama 3.2 (3B, default tag) | —       |
+| Layer           | Tool                        | Version |
+|-----------------+-----------------------------+---------|
+| LLM engine      | Ollama                      | 0.32.0  |
+| Chat model      | Llama 3.2 (3B)              | —       |
+| Embedding model | nomic-embed-text (768-dim)  | —       |
+| API gateway     | LiteLLM proxy               | v1.92.0 |
+| Vector database | Qdrant                      | v1.18.2 |
+| Agent↔tool link | Model Context Protocol      | mcp SDK |
+| RAG scripts     | Python (uv, PEP-723 inline) | 3.11+   |
+| Orchestration   | Docker Compose              | v2      |
+| GPU backend     | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
 
 * Deploy Infrastructure
 ** Prerequisites
@@ -65,7 +93,11 @@ local-llm-hub/
   #+end_src
 - *AMD GPU with the Vulkan driver* on the host (=vulkan-radeon=, part of =mesa=). On Garuda/Arch this ships by default.
 - *Device nodes* =/dev/dri= and =/dev/kfd= present (they are on this host).
-- *Disk:* ~3 GB for the images + ~2 GB for the model.
+- *Disk:* ~5 GB (images + chat model + embedding model).
+- *Python tooling:* [[https://github.com/astral-sh/uv][uv]] — a fast Python runner (a single Rust binary, not a pip package); the =rag/= scripts declare deps inline and run via =uv run=.
+  #+begin_src bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh   # standalone binary (recommended) — or: paru -S uv
+  #+end_src
 
 ** How to deploy
 1. *Create your secrets file* from the template:
@@ -81,26 +113,29 @@ local-llm-hub/
    #+end_src
    =.env= is gitignored — it is never committed.
 
-3. *Start the stack* (pulls the images on first run):
+3. *Start the stack* (pulls the images on first run; starts ollama + litellm + qdrant):
    #+begin_src bash
    docker compose up -d
    #+end_src
 
-4. *Wait for both services to be healthy:*
+4. *Wait for all services to be healthy:*
    #+begin_src bash
-   docker compose ps       # both show (healthy)
+   docker compose ps       # ollama, litellm, qdrant all show (healthy)
    #+end_src
 
-5. *Download the model* (one-time, ~2 GB, persisted in a named volume):
+5. *Download the models* (one-time, persisted in a named volume):
    #+begin_src bash
-   docker compose exec ollama ollama pull llama3.2
+   docker compose exec ollama ollama pull llama3.2          # chat model (~2 GB)
+   docker compose exec ollama ollama pull nomic-embed-text  # embedding model (~270 MB)
    #+end_src
-   Note: =llama3.2='s default tag is the 3B model — small and fast, ideal for learning.
+   Note: =llama3.2='s default tag is the 3B model — small and fast.
 
 6. *Test it* — see [[*Using the API][Using the API]].
 
 ** Using the API
 The gateway is OpenAI-compatible. Authenticate with the master key from =.env=.
+
+*Chat:*
 #+begin_src bash
 # Positive path — a real completion
 curl -s http://127.0.0.1:4000/v1/chat/completions \
@@ -114,6 +149,15 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/chat/completio
   -d '{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}'
 #+end_src
 
+*Embeddings* (used by the RAG scripts):
+#+begin_src bash
+curl -s http://127.0.0.1:4000/v1/embeddings \
+  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nomic-embed-text","input":"hello world"}' | head -c 120
+#+end_src
+Expect JSON starting ={"data":[{"embedding":[= — a 768-long vector.
+
 Any OpenAI-compatible client works — point =base_url= at =http://127.0.0.1:4000/v1= and use the master key.
 
 Confirm the GPU is doing the work:
@@ -123,21 +167,131 @@ docker compose logs ollama | grep -iE 'gpu|vulkan|amd'    # i.e. AMD Radeon RX 9
 
 ** Teardown
 #+begin_src bash
-docker compose down        # stop + remove containers (keeps the model volume)
-docker compose down -v     # also delete the model volume (re-pull next time)
+docker compose down        # stop + remove containers (keeps the data volumes)
+docker compose down -v     # also delete ollama-data + qdrant-data (re-pull / re-index next time)
 #+end_src
 
 ** Troubleshooting
 - *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
 - *Ollama is slow / CPU-only:* the GPU device nodes are not reachable. Check =docker compose logs ollama= for a GPU line; if absent, confirm the active docker context is the native =default= engine.
 - *=permission denied= on a render node:* add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
+- *Embeddings 404 / model not found:* you forgot =ollama pull nomic-embed-text=, or the =nomic-embed-text= entry is missing from =litellm_config.yaml= (restart litellm after editing).
+- *MCP tool doesn't appear:* ensure =uv= is on the *client's* =PATH= (GUI apps often need the absolute =uv= path from =command -v uv=), the script path is absolute, and =.env= is readable (=LITELLM_MASTER_KEY=). Full per-client setup in [[#register-in-a-coding-agent][Register in a coding agent]].
+
+* Retrieval and MCP
+Turn the LLM from "knows its training data" into "knows your documents" via RAG.
+The =rag/= scripts embed your text into Qdrant and expose a search tool over MCP.
+
+** How it works
+#+begin_example
+1. ingest.py      reads text → chunks → embeds via LiteLLM → upserts vectors into Qdrant
+2. mcp_server.py  exposes `search-internal-docs(query)`:
+                    embeds the query → searches Qdrant for the closest chunks → returns them
+3. the AI agent   calls that tool (over MCP/stdio) whenever it needs your docs
+#+end_example
+Both scripts share =rag/common.py=, which holds the Qdrant client, an =embed()=
+helper (calls LiteLLM =/v1/embeddings= → Ollama =nomic-embed-text=), and the
+collection setup. Dependencies are declared inline per script (PEP-723), so
+=uv run <script>= resolves them automatically — no venv management.
+
+Collection: =internal-docs=, 768-dimensional, cosine similarity (matches nomic-embed-text).
+
+** Index your documents
+#+begin_src bash
+uv run rag/ingest.py README.org            # one file
+uv run rag/ingest.py ./some-docs-dir       # or a directory of .org / .md / .txt
+#+end_src
+Expect: =Upserted N chunks ... into 'internal-docs'=.
+Inspect visually in the Qdrant dashboard: http://127.0.0.1:6333/dashboard.
+
+** The MCP tool
+=rag/mcp_server.py= is a stdio MCP server (built with the official =mcp= SDK / FastMCP) exposing one tool:
+
+- *search-internal-docs* = (query: str, limit: int = 4) → str :: embeds =query= and returns the top matching passages (with source paths) from Qdrant.
+
+** Register in a coding agent
+The server is identical for every client — each just spawns =uv run rag/mcp_server.py=; only the *config file and key* differ. Use bare =uv= (it must be on the client's =PATH= — see gotchas) and the *absolute* path to the script (replace =/path/to/local-llm-hub= below).
+
+*Standard block* — OMP, Claude Code, Claude Desktop, Cursor, Cline, Continue, Windsurf, Gemini CLI (merge =qdrant-docs= into the existing =mcpServers= object):
+#+begin_src json
+{
+  "mcpServers": {
+    "qdrant-docs": {
+      "command": "uv",
+      "args": ["run", "/path/to/local-llm-hub/rag/mcp_server.py"]
+    }
+  }
+}
+#+end_src
+
+Where each client looks for it:
+
+| Client              | Config file                                                                                              | Key               |
+|---------------------+----------------------------------------------------------------------------------------------------------+-------------------|
+| OMP (oh-my-pi)      | =~/.omp/agent/mcp.json=                                                                                  | =mcpServers=      |
+| Claude Code         | =<project>/.mcp.json= (or =claude mcp add=)                                                              | =mcpServers=      |
+| Claude Desktop      | =~/.config/Claude/claude_desktop_config.json=                                                            | =mcpServers=      |
+| Cursor              | =<project>/.cursor/mcp.json=                                                                             | =mcpServers=      |
+| Cline (VS Code)     | =~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json=              | =mcpServers=      |
+| Continue            | =~/.continue/config.json=                                                                               | =mcpServers=      |
+| Windsurf            | =~/.codeium/windsurf/mcp_config.json=                                                                    | =mcpServers=      |
+| Gemini CLI          | =~/.gemini/settings.json=                                                                               | =mcpServers=      |
+| VS Code (Copilot)   | =<project>/.vscode/mcp.json=                                                                             | =servers=         |
+| Zed                 | =~/.config/zed/settings.json=                                                                            | =context_servers= |
+
+*Claude Code one-liner* (from the project root — no manual JSON):
+#+begin_src bash
+claude mcp add qdrant-docs -- uv run "$(pwd)/rag/mcp_server.py"
+#+end_src
+
+*VS Code / Copilot variant* (=.vscode/mcp.json=) — note the =servers= key and the =type= field:
+#+begin_src json
+{
+  "servers": {
+    "qdrant-docs": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "/path/to/local-llm-hub/rag/mcp_server.py"]
+    }
+  }
+}
+#+end_src
+
+*Zed variant* (=~/.config/zed/settings.json=) — =command= is nested under =context_servers=:
+#+begin_src json
+{
+  "context_servers": {
+    "qdrant-docs": {
+      "command": {
+        "path": "uv",
+        "args": ["run", "/path/to/local-llm-hub/rag/mcp_server.py"]
+      }
+    }
+  }
+}
+#+end_src
+
+*Gotchas:*
+- *GUI app reports =uv not found=:* apps launched from the dock/app launcher (Claude Desktop, Cursor, VS Code, Windsurf) inherit a minimal =PATH= and can't see =uv=. Fix: use the *absolute* binary path (=command -v uv=, e.g. =~/.local/bin/uv=) in place of bare =uv=.
+- *Config not picked up:* most clients read MCP config only at startup — fully quit and reopen the app (VS Code: *Developer: Reload Window*).
+- *Tool missing after registering:* run the server by hand to see the error:
+  #+begin_src bash
+  uv run rag/mcp_server.py    # should start silently, waiting on stdin
+  #+end_src
+  Usually =.env= is missing =LITELLM_MASTER_KEY=, or the =litellm= / =qdrant= containers aren't running.
+
+** Use it from an agent
+In any agent session (OMP, Claude Code, Cursor, …), ask something grounded in your indexed docs, e.g.:
+#+begin_quote
+"What GPU backend does this project use, and why? Use search-internal-docs."
+#+end_quote
+The agent calls the tool, retrieves the relevant passages from Qdrant, and answers from your documents.
 
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
 - [X] API Gateway & Routing (LiteLLM)
-- [ ] RAG: =pgvector/pgvector:pg16= Postgres + an embedding model in =litellm_config.yaml= (also enables virtual keys / spend tracking).
+- [X] RAG: Qdrant vector DB + nomic-embed-text embeddings
+- [X] MCP integration: =search-internal-docs= tool for agent document search
 - [ ] Observability: Langfuse tracing via LiteLLM callbacks.
-- [ ] The MCP (Model Context Protocol) Integration: interacting with Vector Database
-- [ ] CI/CD Pipeline (GitHub Actions): Automate testing
+- [ ] CI/CD Pipeline (GitHub Actions): automate testing.
 - [ ] Pin image tags by digest for bit-for-bit reproducibility.
-
