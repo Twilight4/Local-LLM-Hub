@@ -1,4 +1,4 @@
-# local-llm-hub — Phase 1: Ollama (LLM engine) + LiteLLM (OpenAI-compatible gateway).
+# local-llm-hub — local LLM infra: Ollama + LiteLLM + Qdrant (RAG) + Phoenix (observability).
 # Bring up:  docker compose up -d
 services:
   ollama:
@@ -29,11 +29,17 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro   # bind-mount our config, read-only
     env_file: [.env]                       # master key injected from here (gitignored)
+    environment:                           # send every request's trace to Phoenix via OTel/OTLP
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: litellm
     depends_on:
       ollama:
         condition: service_healthy         # don't start LiteLLM until Ollama is ready
+      phoenix:
+        condition: service_started
     healthcheck:
-      # python ships in the litellm image; curl does not
+      # python ships in the litellm image; curl is not
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3)\" || exit 1"]
       interval: 15s
       timeout: 5s
@@ -56,11 +62,20 @@ services:
       retries: 5
       start_period: 10s
 
+  phoenix:
+    image: arizephoenix/phoenix:18.1.0      # pinned (arize-phoenix v18.1.0)
+    container_name: phoenix
+    restart: unless-stopped
+    environment:
+      PHOENIX_ENABLE_AUTH: "false"          # local single-user; UI + OTLP open on loopback only
+    ports:
+      - "127.0.0.1:6006:6006"               # Phoenix UI (browser); OTLP 4317/4318 are internal-only
+    volumes:
+      - phoenix-data:/mnt/data              # embedded SQLite store persists here
 
 volumes:
   ollama-data:
   qdrant-data:
+  phoenix-data:
 
-# Future phases (not built yet) — add under `profiles:`:
-#   rag (Phase 2):           postgres (pgvector) + an embedding model in litellm_config.yaml
-#   observability (Phase 3): langfuse tracing via litellm callbacks
+# Stack: ollama + litellm + qdrant + phoenix — all bound to 127.0.0.1.
