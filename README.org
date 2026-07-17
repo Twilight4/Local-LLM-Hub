@@ -1,5 +1,5 @@
 #+title: Local LLM Hub
-#+subtitle: Local, containerized AI infrastructure — Ollama + LiteLLM + Qdrant (RAG over MCP)
+#+subtitle: Local, containerized AI infrastructure — Ollama + LiteLLM + Qdrant (RAG) + Phoenix (observability)
 #+author: Twilight4
 #+date: [2026-07-16 Wed]
 #+options: toc:3 num:nil ^:nil
@@ -27,14 +27,18 @@ Everything runs in Docker, on =127.0.0.1= only.
   - [[#the-mcp-tool][The MCP tool]]
   - [[#register-in-a-coding-agent][Register in a coding agent]]
   - [[#use-it-from-an-agent][Use it from an agent]]
+- [[#observability-with-phoenix][Observability with Phoenix]]
+  - [[#how-tracing-works][How tracing works]]
+  - [[#view-traces][View traces]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
-Three services plus a small retrieval layer:
+Four services plus a small retrieval layer:
 
 - *Ollama* — the engine. Downloads and runs the model on the GPU; speaks its own API on port 11434.
 - *LiteLLM* — the gateway. Exposes the standard OpenAI API on port 4000 (chat *and* embeddings), translates to Ollama, and enforces a *master API key*.
 - *Qdrant* — the vector database. Stores embeddings of your documents for semantic search (port 6333).
+- *Phoenix* — LLM observability. Receives a trace of every LiteLLM request over OpenTelemetry (UI on port 6006).
 
 On top of those containers, a tiny Python *retrieval layer* (in =rag/=) does two
 things: an ingestion script embeds your text into Qdrant, and an *MCP server*
@@ -50,6 +54,8 @@ from "knows its training data" into "knows *your* data" — without retraining.
  chat   ─▶ LiteLLM :4000 ─▶ Ollama :11434 ─▶ AMD GPU (Vulkan, RX 9070 XT)
  embed  ─▶ LiteLLM :4000 ─▶ Ollama nomic-embed-text
 
+ LiteLLM :4000 ──trace (OTel/OTLP)──▶ Phoenix :6006   (UI + traces)
+
  rag/ingest.py   ──embed + upsert──▶ Qdrant :6333  (collection "internal-docs")
                                           ▲
  rag/mcp_server.py   tool: search-internal-docs ── query
@@ -62,7 +68,7 @@ All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
 #+begin_example
 local-llm-hub/
 ├── README.org              this file
-├── docker-compose.yml      ollama + litellm + qdrant, GPU hand-off, healthchecks
+├── docker-compose.yml      ollama + litellm + qdrant + phoenix, GPU hand-off, healthchecks
 ├── litellm_config.yaml     maps model names (llama3.2, nomic-embed-text) to Ollama
 ├── .env.example            committed template for secrets + pinned tags
 ├── .env                    REAL secrets — gitignored, never committed
@@ -80,6 +86,7 @@ local-llm-hub/
 | Embedding model | nomic-embed-text (768-dim)  | —       |
 | API gateway     | LiteLLM proxy               | v1.92.0 |
 | Vector database | Qdrant                      | v1.18.2 |
+| Observability   | Phoenix (Arize)             | v18.1.0 |
 | Agent↔tool link | Model Context Protocol      | mcp SDK |
 | RAG scripts     | Python (uv, PEP-723 inline) | 3.11+   |
 | Orchestration   | Docker Compose              | v2      |
@@ -93,7 +100,7 @@ local-llm-hub/
   #+end_src
 - *AMD GPU with the Vulkan driver* on the host (=vulkan-radeon=, part of =mesa=). On Garuda/Arch this ships by default.
 - *Device nodes* =/dev/dri= and =/dev/kfd= present (they are on this host).
-- *Disk:* ~5 GB (images + chat model + embedding model).
+- *Disk:* ~6 GB (images + chat + embedding models + Phoenix).
 - *Python tooling:* [[https://github.com/astral-sh/uv][uv]] — a fast Python runner (a single Rust binary, not a pip package); the =rag/= scripts declare deps inline and run via =uv run=.
   #+begin_src bash
   curl -LsSf https://astral.sh/uv/install.sh | sh   # standalone binary (recommended) — or: paru -S uv
@@ -113,14 +120,14 @@ local-llm-hub/
    #+end_src
    =.env= is gitignored — it is never committed.
 
-3. *Start the stack* (pulls the images on first run; starts ollama + litellm + qdrant):
+3. *Start the stack* (pulls the images on first run; starts ollama + litellm + qdrant + phoenix):
    #+begin_src bash
    docker compose up -d
    #+end_src
 
 4. *Wait for all services to be healthy:*
    #+begin_src bash
-   docker compose ps       # ollama, litellm, qdrant all show (healthy)
+   docker compose ps       # ollama/litellm/qdrant show (healthy); phoenix shows (Up)
    #+end_src
 
 5. *Download the models* (one-time, persisted in a named volume):
@@ -168,7 +175,7 @@ docker compose logs ollama | grep -iE 'gpu|vulkan|amd'    # i.e. AMD Radeon RX 9
 ** Teardown
 #+begin_src bash
 docker compose down        # stop + remove containers (keeps the data volumes)
-docker compose down -v     # also delete ollama-data + qdrant-data (re-pull / re-index next time)
+docker compose down -v     # also delete ollama-data + qdrant-data + phoenix-data
 #+end_src
 
 ** Troubleshooting
@@ -287,11 +294,32 @@ In any agent session (OMP, Claude Code, Cursor, …), ask something grounded in 
 #+end_quote
 The agent calls the tool, retrieves the relevant passages from Qdrant, and answers from your documents.
 
+* Observability with Phoenix
+Every request through LiteLLM is traced in [[https://github.com/Arize-ai/phoenix][Phoenix]] — open-source, self-hosted LLM observability in a *single container* — via OpenTelemetry. Inspect prompts, responses, token counts, latency, and estimated cost per call.
+
+** How tracing works
+#+begin_example
+LiteLLM ── success_callback: ["otel"] ──OTLP/HTTP──▶ Phoenix :6006/v1/traces
+#+end_example
+- =litellm_config.yaml= sets =success_callback: ["otel"]=.
+- =docker-compose.yml=, on the =litellm= service: =OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006= and =OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf=.
+- Phoenix v18 ingests OTLP at =http://phoenix:6006/v1/traces= (it shares the web port; 4318 is *not* used).
+- Traces persist in Phoenix's embedded SQLite (the =phoenix-data= volume); auth is off (=PHOENIX_ENABLE_AUTH=false=) for local single-user use.
+
+** View traces
+Open http://127.0.0.1:6006 in a browser → *Traces*. Make any request and a new trace appears (model, input, output, tokens, latency):
+#+begin_src bash
+curl -s http://127.0.0.1:4000/v1/chat/completions \
+  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"hello"}]}'
+#+end_src
+
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
 - [X] API Gateway & Routing (LiteLLM)
 - [X] RAG: Qdrant vector DB + nomic-embed-text embeddings
 - [X] MCP integration: =search-internal-docs= tool for agent document search
-- [ ] Observability: Langfuse tracing via LiteLLM callbacks.
+- [X] Observability: Phoenix tracing via LiteLLM's OTel callback.
 - [ ] CI/CD Pipeline (GitHub Actions): automate testing.
 - [ ] Pin image tags by digest for bit-for-bit reproducibility.
