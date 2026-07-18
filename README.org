@@ -368,3 +368,4 @@ so the multi-GB model volumes survive the test.
 - [X] Observability: Phoenix tracing via LiteLLM's OTel callback.
 - [X] Pin image tags by digest for bit-for-bit reproducibility.
 - [X] CI: GitHub Actions runs the chat-endpoint test on every config change.
+- [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
