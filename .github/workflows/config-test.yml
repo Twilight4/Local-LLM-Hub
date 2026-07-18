@@ -40,6 +40,9 @@ jobs:
       - name: Assert chat completion returns valid JSON
         run: ./ci/test_chat.sh
 
+      - name: Assert streaming response returns SSE chunks
+        run: ./ci/test_streaming.sh
+
       - name: Show container logs on failure
         if: failure()
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=50

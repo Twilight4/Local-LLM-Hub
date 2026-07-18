@@ -196,6 +196,15 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/chat/completio
   -d '{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}'
 #+end_src
 
+*Streaming* (chunks arrive as the LLM generates them — like ChatGPT):
+#+begin_src bash
+curl -N http://127.0.0.1:4000/v1/chat/completions \
+  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","stream":true,"messages":[{"role":"user","content":"count to 5"}]}'
+#+end_src
+=-N= disables curl's output buffering so each chunk prints as it arrives. Each line is =data: {chunk-json}=, and the stream ends with =data: [DONE]=.
+
 *Embeddings* (used by the RAG scripts):
 #+begin_src bash
 curl -s http://127.0.0.1:4000/v1/embeddings \
