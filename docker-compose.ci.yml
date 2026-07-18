@@ -1,0 +1,32 @@
+# docker-compose.ci.yml — CI override for config tests.
+# Apply with:  docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+#
+# Swaps the real Ollama (GPU, multi-GB models) for a tiny Python stub,
+# drops the GPU device hand-off, and pins a known master key so the test
+# can authenticate without reading the gitignored .env.
+services:
+  ollama:
+    image: python:3.12-alpine
+    container_name: ollama
+    entrypoint: ["python", "/app/mock_ollama.py"]
+    command: []
+    devices: !reset []               # no GPU in CI
+    volumes:
+      - ./ci/mock_ollama.py:/app/mock_ollama.py:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:11434/api/tags', timeout=2)\" || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  litellm:
+    environment:
+      # Throws a known key over the env_file value; lets the test assert auth.
+      LITELLM_MASTER_KEY: sk-ci-test-key-not-real
+    depends_on:
+      ollama:
+        condition: service_healthy
+      # ponytail: phoenix/qdrant aren't needed for the chat test; drop the dep
+      # so we can --scale them to 0 in CI without blocking startup.
+      phoenix: !reset null
