@@ -97,7 +97,7 @@ local-llm-hub/
 | Orchestration   | Docker Compose              | v2      |
 | GPU backend (opt.) | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
 
-* From Local to Production
+* From Local to Production Environment (AWS Bedrock)
 A single-host Docker Compose stack doesn't map 1:1 to a production cloud-native
 deployment. This table shows each local component and its typical AWS
 production equivalent. The *LiteLLM* gateway abstraction means only the =model_list= entries
@@ -113,7 +113,7 @@ RAG, and MCP layers move largely as-is.
 | Vector DB       | Qdrant (single container)   | Amazon OpenSearch (k-NN) or RDS pgvector      |
 | Observability   | Phoenix (single container)  | Langfuse Cloud / Datadog LLM Obs / CloudWatch |
 | Secrets         | =.env= (gitignored)           | AWS Secrets Manager / Parameter Store (KMS)   |
-| Orchestration   | Docker Compose              | Amazon ECS (Fargate) or EKS                   |
+| Orchestration   | Docker Compose              | Amazon ECS (Fargate) or EKS (Kubernetes)      |
 | Document ingest | =rag/ingest.py= (=uv run=)      | Lambda or ECS task triggered by S3 events     |
 | MCP transport   | =rag/mcp_server.py= (stdio)   | MCP over HTTP, or AWS Lambda tool             |
 | GPU compute     | AMD RX 9070 XT (opt-in)     | Bedrock managed, or Inferentia2 instances     |
