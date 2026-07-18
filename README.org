@@ -384,3 +384,6 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Pin image tags by digest for bit-for-bit reproducibility.
 - [X] CI: GitHub Actions runs the chat-endpoint test on every config change.
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
+- [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
+- [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
+- [ ] RAG eval harness: golden Q→expected-chunk set scored in CI to catch retrieval regressions.
