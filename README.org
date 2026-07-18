@@ -62,7 +62,8 @@ All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
 #+begin_example
 local-llm-hub/
 ├── README.org              this file
-├── docker-compose.yml      ollama + litellm + qdrant + phoenix, GPU hand-off, healthchecks
+├── docker-compose.yml      ollama + litellm + qdrant + phoenix, CPU-default, healthchecks
+├── docker-compose.gpu.yml  AMD GPU override: /dev/dri + /dev/kfd pass-through (opt-in)
 ├── docker-compose.ci.yml   CI override: mock Ollama, no GPU, fixed master key
 ├── litellm_config.yaml     maps model names (llama3.2, nomic-embed-text) to Ollama
 ├── .env.example            committed template for the master + salt keys
@@ -92,16 +93,15 @@ local-llm-hub/
 | Agent↔tool link | Model Context Protocol      | mcp SDK |
 | RAG scripts     | Python (uv, PEP-723 inline) | 3.11+   |
 | Orchestration   | Docker Compose              | v2      |
-| GPU backend     | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
+| GPU backend (opt.) | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
 
 * Deploy Infrastructure
 ** Prerequisites
-- *Docker, native engine.* The active context must be =default= — Docker Desktop's VM-backed runtime does not pass the GPU through reliably:
+- *Docker, native engine.* Default =docker context= is preferred; Docker Desktop's VM-backed runtime doesn't pass the GPU through reliably (only relevant if you use the GPU override below):
   #+begin_src bash
   docker context show    # expect: default
   #+end_src
-- *AMD GPU with the Vulkan driver* on the host (=vulkan-radeon=, part of =mesa=). On Garuda/Arch this ships by default.
-- *Device nodes* =/dev/dri= and =/dev/kfd= present (they are on this host).
+- *(Optional) AMD GPU + Vulkan driver* (=vulkan-radeon=, part of =mesa=) with =/dev/dri= and =/dev/kfd= present. Without it, the stack runs on CPU (portable, slower). On Garuda/Arch the driver ships by default.
 - *Disk:* ~6 GB (images + chat + embedding models + Phoenix).
 - *Python tooling:* [[https://github.com/astral-sh/uv][uv]] — a fast Python runner (a single Rust binary, not a pip package); the =rag/= scripts declare deps inline and run via =uv run=.
   #+begin_src bash
@@ -122,10 +122,15 @@ local-llm-hub/
    #+end_src
    =.env= is gitignored — it is never committed.
 
-3. *Start the stack* (pulls the images on first run; starts ollama + litellm + qdrant + phoenix):
+3. *Start the stack* — CPU by default (portable; works on any Docker host), or apply the GPU override on an AMD host for faster inference:
    #+begin_src bash
+   # CPU (default) — portable:
    docker compose up -d
+
+   # AMD GPU (faster; needs the Vulkan driver):
+   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
    #+end_src
+   Tip: alias the GPU form — =alias dcgpu='docker compose -f docker-compose.yml -f docker-compose.gpu.yml'= — so day-to-day use is just =dcgpu up -d=.
 
 4. *Wait for all services to be healthy:*
    #+begin_src bash
@@ -173,6 +178,7 @@ Confirm the GPU is doing the work:
 #+begin_src bash
 docker compose logs ollama | grep -iE 'gpu|vulkan|amd'    # i.e. AMD Radeon RX 9070 XT (RADV GFX1201)
 #+end_src
+(Only meaningful when the GPU override is applied; CPU-mode logs show no GPU line.)
 
 ** Teardown
 #+begin_src bash
