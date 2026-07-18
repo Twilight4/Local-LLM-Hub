@@ -1,0 +1,27 @@
+# Dependabot — weekly bumps for Docker images and GitHub Actions.
+#
+# For docker-compose.yml / docker-compose.ci.yml: when upstream repoints a
+# pinned tag to a new digest (security patch, bug fix), Dependabot opens a
+# PR bumping the digest. This is what makes digest pinning cheap.
+#
+# PRs trigger the config-test.yml workflow; auto-merge fires once CI passes
+# (see .github/workflows/dependabot-auto-merge.yml).
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/"                  # scans docker-compose.yml + docker-compose.ci.yml
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"                  # scans .github/workflows/*.yml
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
