@@ -74,7 +74,8 @@ local-llm-hub/
 │   └── config-test.yml     GitHub Actions: chat-endpoint test on every config change
 ├── ci/
 │   ├── mock_ollama.py      stub Ollama for CI (canned responses, no model/GPU)
-│   └── test_chat.sh        POSTs a chat completion, asserts OpenAI JSON shape
+│   ├── test_chat.sh        POSTs a chat completion, asserts OpenAI JSON shape
+│   └── test_streaming.sh   POSTs a streaming completion, asserts SSE chunks
 ├── rag/
 │   ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
 │   ├── ingest.py           chunk text → embed → upsert into Qdrant
@@ -399,6 +400,7 @@ docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d \
     --wait --scale qdrant=0 --scale phoenix=0
 
 ./ci/test_chat.sh
+./ci/test_streaming.sh
 
 # tear down without -v to keep model volumes intact
 docker compose -f docker-compose.yml -f docker-compose.ci.yml down
@@ -426,6 +428,6 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Pin image tags by digest for bit-for-bit reproducibility.
 - [X] CI: GitHub Actions runs the chat-endpoint test on every config change.
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
+- [X] Streaming responses: =stream: true= support for chat completions.
 - [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
 - [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
-- [ ] Streaming responses: =stream: true= support for chat completions.
