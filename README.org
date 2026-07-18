@@ -35,6 +35,7 @@ Everything runs in Docker, on =127.0.0.1= only.
   - [[#what-the-test-checks][What the test checks]]
   - [[#running-locally][Running locally]]
   - [[#dependency-updates][Dependency updates]]
+- [[#from-local-to-production][From Local to Production]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
@@ -95,6 +96,38 @@ local-llm-hub/
 | RAG scripts     | Python (uv, PEP-723 inline) | 3.11+   |
 | Orchestration   | Docker Compose              | v2      |
 | GPU backend (opt.) | Mesa Vulkan (vulkan-radeon) | 26.1.4  |
+
+* From Local to Production
+A single-host Docker Compose stack doesn't map 1:1 to a production cloud-native
+deployment. This table shows each local component and its typical AWS
+production equivalent. The *LiteLLM* gateway abstraction means only the =model_list= entries
+change to swap Ollama for Bedrock (=ollama/*= → =bedrock/*=); the gateway,
+RAG, and MCP layers move largely as-is.
+
+| Layer           | Local (this repo)           | AWS production                                |
+|-----------------+-----------------------------+-----------------------------------------------|
+| LLM inference   | Ollama (Vulkan GPU)         | Amazon Bedrock (managed, no model hosting)    |
+| Embeddings      | =nomic-embed-text= via Ollama | Amazon Titan Text Embeddings v2 (Bedrock)     |
+| API gateway     | LiteLLM (master key)        | LiteLLM on ECS, or Bedrock native API         |
+| Auth            | =.env= master key             | Cognito / API Gateway authorizer + IAM        |
+| Vector DB       | Qdrant (single container)   | Amazon OpenSearch (k-NN) or RDS pgvector      |
+| Observability   | Phoenix (single container)  | Langfuse Cloud / Datadog LLM Obs / CloudWatch |
+| Secrets         | =.env= (gitignored)           | AWS Secrets Manager / Parameter Store (KMS)   |
+| Orchestration   | Docker Compose              | Amazon ECS (Fargate) or EKS                   |
+| Document ingest | =rag/ingest.py= (=uv run=)      | Lambda or ECS task triggered by S3 events     |
+| MCP transport   | =rag/mcp_server.py= (stdio)   | MCP over HTTP, or AWS Lambda tool             |
+| GPU compute     | AMD RX 9070 XT (opt-in)     | Bedrock managed, or Inferentia2 instances     |
+| Storage         | Docker named volumes        | EBS (block) + S3 (object/docs)                |
+| Networking      | =127.0.0.1= only              | VPC + ALB (ACM-managed TLS)                   |
+| CI/CD           | GitHub Actions              | GitHub Actions (OIDC → AWS) or CodePipeline   |
+
+Two things don't change in the move:
+- *LiteLLM* stays as the gateway abstraction; only its =model_list= shifts from =ollama/*= to =bedrock/*=.
+- *MCP* is transport-agnostic — same =search-internal-docs= tool, just exposed over HTTP instead of stdio.
+
+The real production-isolation work isn't the LLM layer (Bedrock makes that
+easy); it's the surrounding infra: auth, VPC networking, TLS, autoscaling,
+and backups.
 
 * Deploy Infrastructure
 ** Prerequisites
@@ -386,4 +419,4 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
 - [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
 - [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
-- [ ] Streaming responses — ~30 min: =stream: true= support for chat completions.
+- [ ] Streaming responses: =stream: true= support for chat completions.
