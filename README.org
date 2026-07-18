@@ -33,6 +33,7 @@ Everything runs in Docker, on =127.0.0.1= only.
 - [[#testing-in-ci][Testing in CI]]
   - [[#what-the-test-checks][What the test checks]]
   - [[#running-locally][Running locally]]
+  - [[#dependency-updates][Dependency updates]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
@@ -359,6 +360,13 @@ docker compose up -d
 
 The CI workflow uses =down -v= (clean state per run); locally, omit =-v=
 so the multi-GB model volumes survive the test.
+
+** Dependency updates
+=.github/dependabot.yml= opens weekly PRs (Monday) bumping the
+digest-pinned Docker images and GitHub Actions. Every Dependabot PR
+triggers the chat test above; =.github/workflows/dependabot-auto-merge.yml=
+auto-merges on green CI and leaves failures open for manual review.
+Requires "Allow auto-merge" enabled in repo Settings → General → Pull Requests.
 
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
