@@ -5,9 +5,10 @@
 #+options: toc:3 num:nil ^:nil
 #+property: header-args :exports code
 
-Run open-source LLMs on the local AMD GPU, expose them behind a single
-standardized, OpenAI-compatible API (master-key protected), and give an AI agent
-a *search tool* over your own documents via the Model Context Protocol (MCP).
+Run open-source LLMs locally — portable to any Docker host, with optional
+AMD GPU acceleration — behind a single standardized, OpenAI-compatible
+API (master-key protected), and give an AI agent a *search tool* over
+your own documents via the Model Context Protocol (MCP).
 Everything runs in Docker, on =127.0.0.1= only.
 
 * Table of Contents :toc:
@@ -130,7 +131,6 @@ local-llm-hub/
    # AMD GPU (faster; needs the Vulkan driver):
    docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
    #+end_src
-   Tip: alias the GPU form — =alias dcgpu='docker compose -f docker-compose.yml -f docker-compose.gpu.yml'= — so day-to-day use is just =dcgpu up -d=.
 
 4. *Wait for all services to be healthy:*
    #+begin_src bash
@@ -188,8 +188,9 @@ docker compose down -v     # also delete ollama-data + qdrant-data + phoenix-dat
 
 ** Troubleshooting
 - *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
-- *Ollama is slow / CPU-only:* the GPU device nodes are not reachable. Check =docker compose logs ollama= for a GPU line; if absent, confirm the active docker context is the native =default= engine.
-- *=permission denied= on a render node:* add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
+- *Ollama is slow:* it's running on CPU — the default, for portability. To use an AMD GPU, apply the override (=docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d=), then confirm via =docker compose logs ollama | grep -i vulkan=.
+- *GPU override fails (=no such file or directory= on =/dev/dri= or =/dev/kfd=):* you're on a host without AMD GPU device nodes. Stay on CPU (default) or move to a host with an AMD GPU + the =vulkan-radeon= driver. NVIDIA needs a different override (see the =docker-compose.gpu.yml= header); not provided.
+- =permission denied= *on a render node*: add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
 - *Embeddings 404 / model not found:* you forgot =ollama pull nomic-embed-text=, or the =nomic-embed-text= entry is missing from =litellm_config.yaml= (restart litellm after editing).
 - *MCP tool doesn't appear:* ensure =uv= is on the *client's* =PATH= (GUI apps often need the absolute =uv= path from =command -v uv=), the script path is absolute, and =.env= is readable (=LITELLM_MASTER_KEY=). Full per-client setup in [[#register-in-a-coding-agent][Register in a coding agent]].
 
