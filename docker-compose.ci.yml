@@ -2,15 +2,14 @@
 # Apply with:  docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
 #
 # Swaps the real Ollama (GPU, multi-GB models) for a tiny Python stub,
-# drops the GPU device hand-off, and pins a known master key so the test
-# can authenticate without reading the gitignored .env.
+# and pins a known master key so the test can authenticate without
+# reading the gitignored .env.
 services:
   ollama:
     image: python:3.12-alpine
     container_name: ollama
     entrypoint: ["python", "/app/mock_ollama.py"]
     command: []
-    devices: !reset []               # no GPU in CI
     volumes:
       - ./ci/mock_ollama.py:/app/mock_ollama.py:ro
     healthcheck:
