@@ -314,5 +314,5 @@ curl -s http://127.0.0.1:4000/v1/chat/completions \
 - [X] RAG: Qdrant vector DB + nomic-embed-text embeddings
 - [X] MCP integration: =search-internal-docs= tool for agent document search
 - [X] Observability: Phoenix tracing via LiteLLM's OTel callback.
+- [X] Pin image tags by digest for bit-for-bit reproducibility.
 - [ ] CI/CD Pipeline (GitHub Actions): automate testing.
-- [ ] Pin image tags by digest for bit-for-bit reproducibility.
