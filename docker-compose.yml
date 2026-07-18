@@ -2,7 +2,7 @@
 # Bring up:  docker compose up -d
 services:
   ollama:
-    image: ollama/ollama:0.32.0            # pinned version, never "latest"
+    image: ollama/ollama:0.32.0@sha256:57f573b47f1f71ebb445789f279fe3e596a8beab182f7cf486db9205bad87c5a            # pinned version + digest, never "latest"
     container_name: ollama
     restart: unless-stopped
     ports:
@@ -20,7 +20,7 @@ services:
       start_period: 15s
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.92.0
+    image: ghcr.io/berriai/litellm:v1.92.0@sha256:9ef6f45bc0104940571765e610c52a1d761b5ec85efcd193795281086ee61277
     container_name: litellm
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
@@ -47,7 +47,7 @@ services:
       start_period: 25s
 
   qdrant:
-    image: qdrant/qdrant:v1.18.2          # pinned latest stable (2026-06)
+    image: qdrant/qdrant:v1.18.2@sha256:75eab8c4ba42096724fdcfde8b4de0b5713d529dde32f285a1f86fdcb2c9e50c          # pinned latest stable (2026-06) + digest
     container_name: qdrant
     restart: unless-stopped
     ports:
@@ -63,7 +63,7 @@ services:
       start_period: 10s
 
   phoenix:
-    image: arizephoenix/phoenix:18.1.0      # pinned (arize-phoenix v18.1.0)
+    image: arizephoenix/phoenix:18.1.0@sha256:3703cf74388218163d4b599892c4c47560a6003b117d68896963a88898fe7815      # pinned (arize-phoenix v18.1.0) + digest
     container_name: phoenix
     restart: unless-stopped
     environment:
