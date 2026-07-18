@@ -22,6 +22,16 @@ class MockOllama(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_ndjson(self, code: int, chunks: list) -> None:
+        # ponytail: not true chunked streaming — sends the full NDJSON body
+        # with Content-Length. LiteLLM parses line-by-line either way.
+        payload = ("\n".join(json.dumps(c) for c in chunks) + "\n").encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
         if not length:
@@ -52,6 +62,14 @@ class MockOllama(BaseHTTPRequestHandler):
             # request: {"prompt": "..."}; response: {"response": "text"}
             prompt = body.get("prompt", "")
             reply = "ok" if "ok" in prompt.lower() else f"echo:{prompt[:32]}"
+            if body.get("stream"):
+                mid = max(1, len(reply) // 2)
+                self._send_ndjson(200, [
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "response": reply[:mid], "done": False},
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "response": reply[mid:], "done": False},
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "response": "", "done": True, "done_reason": "stop", "eval_count": len(reply)},
+                ])
+                return
             self._send(200, {
                 "model": model,
                 "created_at": "2026-01-01T00:00:00Z",
@@ -66,6 +84,14 @@ class MockOllama(BaseHTTPRequestHandler):
                 if m.get("role") == "user":
                     user_msg += m.get("content", "")
             reply = "ok" if "ok" in user_msg.lower() else f"echo:{user_msg[:32]}"
+            if body.get("stream"):
+                mid = max(1, len(reply) // 2)
+                self._send_ndjson(200, [
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "message": {"role": "assistant", "content": reply[:mid]}, "done": False},
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "message": {"role": "assistant", "content": reply[mid:]}, "done": False},
+                    {"model": model, "created_at": "2026-01-01T00:00:00Z", "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop", "eval_count": len(reply)},
+                ])
+                return
             self._send(200, {
                 "model": model,
                 "created_at": "2026-01-01T00:00:00Z",
