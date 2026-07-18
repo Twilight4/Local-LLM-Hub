@@ -386,4 +386,4 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
 - [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
 - [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
-- [ ] RAG eval harness: golden Q→expected-chunk set scored in CI to catch retrieval regressions.
+- [ ] Streaming responses — ~30 min: =stream: true= support for chat completions.
