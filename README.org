@@ -30,6 +30,9 @@ Everything runs in Docker, on =127.0.0.1= only.
 - [[#observability-with-phoenix][Observability with Phoenix]]
   - [[#how-tracing-works][How tracing works]]
   - [[#view-traces][View traces]]
+- [[#testing-in-ci][Testing in CI]]
+  - [[#what-the-test-checks][What the test checks]]
+  - [[#running-locally][Running locally]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
@@ -59,9 +62,15 @@ All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
 local-llm-hub/
 ├── README.org              this file
 ├── docker-compose.yml      ollama + litellm + qdrant + phoenix, GPU hand-off, healthchecks
+├── docker-compose.ci.yml   CI override: mock Ollama, no GPU, fixed master key
 ├── litellm_config.yaml     maps model names (llama3.2, nomic-embed-text) to Ollama
-├── .env.example            committed template for secrets + pinned tags
+├── .env.example            committed template for the master + salt keys
 ├── .env                    REAL secrets — gitignored, never committed
+├── .github/workflows/
+│   └── config-test.yml     GitHub Actions: chat-endpoint test on every config change
+├── ci/
+│   ├── mock_ollama.py      stub Ollama for CI (canned responses, no model/GPU)
+│   └── test_chat.sh        POSTs a chat completion, asserts OpenAI JSON shape
 ├── rag/
 │   ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
 │   ├── ingest.py           chunk text → embed → upsert into Qdrant
@@ -308,6 +317,49 @@ curl -s http://127.0.0.1:4000/v1/chat/completions \
   -d '{"model":"llama3.2","messages":[{"role":"user","content":"hello"}]}'
 #+end_src
 
+* Testing in CI
+Every change to the LiteLLM config, the compose files, =.env.example=, or
+the test infrastructure itself triggers a GitHub Actions workflow
+(=.github/workflows/config-test.yml=) that brings the stack up against a
+*mock Ollama* and asserts a chat completion returns valid OpenAI JSON.
+
+The mock exists because the real engine needs an AMD GPU and multi-GB
+model pulls — neither is available on a hosted CI runner. =ci/mock_ollama.py=
+is an ~80-line stdlib HTTP server that speaks just enough of Ollama's
+native API (=/api/generate=, =/api/chat=, =/api/tags=, =/api/show=,
+=/api/embeddings=) for LiteLLM's =ollama/*= provider to route through it
+and return canned, deterministic output.
+
+** What the test checks
+=ci/test_chat.sh= POSTs a chat completion to LiteLLM and asserts:
+1. The response parses as JSON with =choices[0].message.content= as a string.
+2. The content matches the mock's deterministic reply (=ok=).
+
+What this guards: YAML errors, broken =model_list=, missing master-key
+env, wrong ports, removed services, malformed response shape. What it
+does *not* guard: real model output (nondeterministic; out of scope for CI).
+
+** Running locally
+#+begin_src bash
+# stop the real stack first — same container names + port 4000 conflict
+docker compose down
+
+# bring up the CI variant: mock ollama, no qdrant/phoenix
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d \
+    --wait --scale qdrant=0 --scale phoenix=0
+
+./ci/test_chat.sh
+
+# tear down without -v to keep model volumes intact
+docker compose -f docker-compose.yml -f docker-compose.ci.yml down
+
+# restore the real stack
+docker compose up -d
+#+end_src
+
+The CI workflow uses =down -v= (clean state per run); locally, omit =-v=
+so the multi-GB model volumes survive the test.
+
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
 - [X] API Gateway & Routing (LiteLLM)
@@ -315,4 +367,4 @@ curl -s http://127.0.0.1:4000/v1/chat/completions \
 - [X] MCP integration: =search-internal-docs= tool for agent document search
 - [X] Observability: Phoenix tracing via LiteLLM's OTel callback.
 - [X] Pin image tags by digest for bit-for-bit reproducibility.
-- [ ] CI/CD Pipeline (GitHub Actions): automate testing.
+- [X] CI: GitHub Actions runs the chat-endpoint test on every config change.
