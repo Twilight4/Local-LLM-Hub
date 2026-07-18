@@ -1,0 +1,20 @@
+# docker-compose.gpu.yml — AMD GPU override for the local-llm-hub stack.
+#
+# The base docker-compose.yml is CPU-default (portable — runs on any host).
+# Apply this override on machines with an AMD GPU + the Vulkan driver (RADV):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Optional shell alias (add to ~/.zshrc or ~/.bashrc):
+#   alias dcgpu='docker compose -f docker-compose.yml -f docker-compose.gpu.yml'
+#   dcgpu up -d
+#
+# NVIDIA users: this override is AMD-specific. The equivalent uses
+# `deploy.resources.reservations.devices: [{driver: nvidia, ...}]` and
+# requires the NVIDIA Container Toolkit on the host. Not included — add
+# when an NVIDIA cloner needs it (YAGNI until then).
+services:
+  ollama:
+    devices:                           # AMD GPU hand-off (Vulkan / RADV backend)
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd

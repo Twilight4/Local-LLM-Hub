@@ -9,9 +9,7 @@ services:
       - "127.0.0.1:11434:11434"            # Ollama's own API, loopback only (debug/pull)
     volumes:
       - ollama-data:/root/.ollama          # named volume: downloaded models survive restarts
-    devices:                               # AMD GPU hand-off (uses the Vulkan backend)
-      - /dev/dri:/dev/dri
-      - /dev/kfd:/dev/kfd
+    # GPU is opt-in: apply docker-compose.gpu.yml to pass /dev/dri + /dev/kfd through.
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 10s
