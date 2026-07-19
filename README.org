@@ -431,3 +431,6 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Streaming responses: =stream: true= support for chat completions.
 - [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
 - [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
+- [ ] Kubernetes: package the four-service stack as a Helm chart under =deploy/helm/=.
+- [ ] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
+- [ ] Platform observability: =kube-prometheus-stack= + LiteLLM/Ollama =ServiceMonitors= + Grafana dashboards.
