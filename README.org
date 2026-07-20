@@ -16,6 +16,7 @@ Everything runs in Docker, on =127.0.0.1= only.
   - [[#architecture][Architecture]]
   - [[#directory-structure][Directory Structure]]
   - [[#tech-stack][Tech Stack]]
+- [[#from-local-to-production-environment-aws-bedrock][From Local to Production Environment (AWS Bedrock)]]
 - [[#deploy-infrastructure][Deploy Infrastructure]]
   - [[#prerequisites][Prerequisites]]
   - [[#how-to-deploy][How to deploy]]
@@ -35,7 +36,6 @@ Everything runs in Docker, on =127.0.0.1= only.
   - [[#what-the-test-checks][What the test checks]]
   - [[#running-locally][Running locally]]
   - [[#dependency-updates][Dependency updates]]
-- [[#from-local-to-production][From Local to Production]]
 - [[#roadmap][Roadmap]]
 
 * Project Overview
@@ -77,9 +77,11 @@ local-llm-hub/
 │   ├── test_chat.sh        POSTs a chat completion, asserts OpenAI JSON shape
 │   └── test_streaming.sh   POSTs a streaming completion, asserts SSE chunks
 ├── rag/
+│   ├── chunking.py         token-aware, heading-aware chunker (pure function; tiktoken)
 │   ├── common.py           shared config: Qdrant client, embed() via LiteLLM, collection setup
-│   ├── ingest.py           chunk text → embed → upsert into Qdrant
-│   └── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
+│   ├── ingest.py           token+heading-aware chunk → embed → upsert (idempotent per file)
+│   ├── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
+│   └── test_chunk.py       chunker self-check (uv run rag/test_chunk.py)
 └── assets/
     └── architecture.png   the architecture diagram (see Architecture)
 #+end_example
@@ -243,9 +245,9 @@ The =rag/= scripts embed your text into Qdrant and expose a search tool over MCP
 
 ** How it works
 #+begin_example
-1. ingest.py      reads text → chunks → embeds via LiteLLM → upserts vectors into Qdrant
-2. mcp_server.py  exposes `search-internal-docs(query)`:
-                    embeds the query → searches Qdrant for the closest chunks → returns them
+1. ingest.py      reads text → token+heading-aware chunks → embeds via LiteLLM → upserts (idempotent per file) into Qdrant
+2. mcp_server.py  exposes `search-internal-docs(query, source_contains?, section_contains?)`:
+                    embeds the query → searches Qdrant for the closest chunks → returns them (optional source/section filters)
 3. the AI agent   calls that tool (over MCP/stdio) whenever it needs your docs
 #+end_example
 Both scripts share =rag/common.py=, which holds the Qdrant client, an =embed()=
@@ -260,14 +262,14 @@ Collection: =internal-docs=, 768-dimensional, cosine similarity (matches nomic-e
 uv run rag/ingest.py README.org            # one file
 uv run rag/ingest.py ./some-docs-dir       # or a directory of .org / .md / .txt
 #+end_src
-Expect: =Upserted N chunks ... into 'internal-docs'=.
+Expect: =Ingested N chunks from M file(s) into 'internal-docs'=. Re-running is idempotent (per-file clobber).
 
 Inspect visually in the Qdrant dashboard: http://127.0.0.1:6333/dashboard.
 
 ** The MCP tool
 =rag/mcp_server.py= is a stdio MCP server (built with the official =mcp= SDK / FastMCP) exposing one tool:
 
-- *search-internal-docs* = (query: str, limit: int = 4) → str :: embeds =query= and returns the top matching passages (with source paths) from Qdrant.
+- *search-internal-docs* = (query: str, limit: int = 4, source_contains?: str, section_contains?: str) → str :: embeds =query= and returns the top matching passages (with source + section) from Qdrant. Optional =source_contains= / =section_contains= narrow the search to a file-path or heading substring.
 
 ** Register in a coding agent
 The server is identical for every client — each just spawns =uv run rag/mcp_server.py=; only the *config file and key* differ. Use bare =uv= (it must be on the client's =PATH= — see gotchas) and the *absolute* path to the script (replace =/path/to/local-llm-hub= below).
@@ -429,7 +431,7 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] CI: GitHub Actions runs the chat-endpoint test on every config change.
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
 - [X] Streaming responses: =stream: true= support for chat completions.
-- [ ] RAG: token-aware chunking + Qdrant metadata filters (=source_path=, =ingested_at=) for better retrieval.
+- [X] RAG: token-aware chunking + Qdrant metadata filters (=source=, =section=) for better retrieval.
 - [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
 - [ ] Kubernetes: package the four-service stack as a Helm chart under =deploy/helm/=.
 - [ ] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
