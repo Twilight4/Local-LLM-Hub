@@ -39,12 +39,13 @@ Everything runs in Docker, on =127.0.0.1= only.
 - [[#roadmap][Roadmap]]
 
 * Project Overview
-Four services plus a small retrieval layer:
+Five services plus a small retrieval layer:
 
 - *Ollama* — the engine. Downloads and runs the model on the GPU; speaks its own API on port 11434.
 - *LiteLLM* — the gateway. Exposes the standard OpenAI API on port 4000 (chat *and* embeddings), translates to Ollama, and enforces a *master API key*.
 - *Qdrant* — the vector database. Stores embeddings of your documents for semantic search (port 6333).
 - *Phoenix* — LLM observability. Receives a trace of every LiteLLM request over OpenTelemetry (UI on port 6006).
+- *Open WebUI* — the chat UI. A ChatGPT-style web frontend on port 8080; routes every chat through LiteLLM (master-key gated, traced) rather than talking to Ollama directly.
 
 On top of those containers, a tiny Python *retrieval layer* (in =rag/=) does two
 things: an ingestion script embeds your text into Qdrant, and an *MCP server*
@@ -59,6 +60,7 @@ from "knows its training data" into "knows *your* data" — without retraining.
 #+caption: Local LLM Hub — request and tracing flow (every LiteLLM call is traced to Phoenix via OTel).
 [[file:assets/architecture.png]]
 All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
+The web UI ([[http://127.0.0.1:8080][http://127.0.0.1:8080]]) is the browser entry point: sign up (first user becomes admin), pick a model, and chat. Open WebUI routes every request through LiteLLM, so chats hit the same master-key gate and Phoenix tracing as direct API calls — no separate Ollama shortcut.
 
 ** Directory Structure
 #+begin_example
@@ -399,7 +401,7 @@ docker compose down
 
 # bring up the CI variant: mock ollama, no qdrant/phoenix
 docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d \
-    --wait --scale qdrant=0 --scale phoenix=0
+    --wait --scale qdrant=0 --scale phoenix=0 --scale open-webui=0
 
 ./ci/test_chat.sh
 ./ci/test_streaming.sh
@@ -432,7 +434,7 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Dependabot: weekly Docker image + GitHub Actions bumps, auto-merge on green CI.
 - [X] Streaming responses: =stream: true= support for chat completions.
 - [X] RAG: token-aware chunking + Qdrant metadata filters (=source=, =section=) for better retrieval.
-- [ ] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser.
-- [ ] Kubernetes: package the four-service stack as a Helm chart under =deploy/helm/=.
+- [X] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser ([[http://127.0.0.1:8080][http://127.0.0.1:8080]]; first signup = admin).
+- [ ] Kubernetes: package the five-service stack as a Helm chart under =deploy/helm/=.
 - [ ] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
 - [ ] Platform observability: =kube-prometheus-stack= + LiteLLM/Ollama =ServiceMonitors= + Grafana dashboards.
