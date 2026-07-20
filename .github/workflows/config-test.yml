@@ -35,7 +35,7 @@ jobs:
           docker compose \
             -f docker-compose.yml \
             -f docker-compose.ci.yml \
-            up -d --wait --scale qdrant=0 --scale phoenix=0
+            up -d --wait --scale qdrant=0 --scale phoenix=0 --scale open-webui=0
 
       - name: Assert chat completion returns valid JSON
         run: ./ci/test_chat.sh

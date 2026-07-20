@@ -60,6 +60,33 @@ services:
       retries: 5
       start_period: 10s
 
+  open-webui:                               # ChatGPT-style web UI; browser → here → LiteLLM
+    image: ghcr.io/open-webui/open-webui:main@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"                # Web UI (browser); loopback only like the rest
+    volumes:
+      - open-webui-data:/app/backend/data    # users, chats, settings + WEBUI_SECRET_KEY persist here
+    environment:
+      # Route through LiteLLM (not Ollama directly) so every chat hits the
+      # master-key gate + Phoenix tracing. DISABLE_OLLAMA_API prevents the
+      # direct-Ollama shortcut that would bypass both.
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}  # compose-substituted from .env at parse time
+      ENABLE_OLLAMA_API: "false"
+      # Auth: default ENABLE_SIGNUP=true. First browser signup becomes admin;
+      # disable signup afterward in Admin Panel > Settings to lock to one account.
+    depends_on:
+      litellm:
+        condition: service_healthy           # model list is fetched from LiteLLM on startup
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   phoenix:
     image: arizephoenix/phoenix:18.1.0@sha256:3703cf74388218163d4b599892c4c47560a6003b117d68896963a88898fe7815      # pinned (arize-phoenix v18.1.0) + digest
     container_name: phoenix
@@ -75,5 +102,6 @@ volumes:
   ollama-data:
   qdrant-data:
   phoenix-data:
+  open-webui-data:
 
-# Stack: ollama + litellm + qdrant + phoenix — all bound to 127.0.0.1.
+# Stack: ollama + litellm + qdrant + phoenix + open-webui — all bound to 127.0.0.1.
