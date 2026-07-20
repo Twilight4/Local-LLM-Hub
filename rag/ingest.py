@@ -1,31 +1,25 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["qdrant-client>=1.12", "httpx", "python-dotenv"]
+# dependencies = ["qdrant-client>=1.12", "httpx", "python-dotenv", "tiktoken"]
 # ///
 """Embed text files into Qdrant.
+
+Token-aware, heading-aware chunking; idempotent per-file reingest.
 
 Usage:
   uv run rag/ingest.py README.org
   uv run rag/ingest.py ./some-docs-dir
 """
+import hashlib
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from qdrant_client.models import PointStruct
+from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 
+from chunking import _title_from, chunk
 from common import COLLECTION, ensure_collection, embed, get_client
-
-CHUNK_SIZE = 800      # characters
-OVERLAP    = 100
-
-
-def chunk(text: str) -> list[str]:
-    out, i = [], 0
-    while i < len(text):
-        out.append(text[i:i + CHUNK_SIZE])
-        i += CHUNK_SIZE - OVERLAP
-    return out or [text]
 
 
 def gather(paths: list[str]) -> list[Path]:
@@ -44,22 +38,50 @@ def main(paths: list[str]) -> None:
     client = get_client()
     ensure_collection(client)
 
-    records = []  # (text, source)
+    total_points = 0
     for f in files:
-        for c in chunk(f.read_text(errors="ignore")):
-            records.append((c, str(f)))
-    if not records:
-        print("Nothing to ingest."); return
+        content = f.read_text(errors="ignore")
+        title = _title_from(content, f.stem)
+        doc_hash = hashlib.sha256(content.encode()).hexdigest()
+        ingested_at = datetime.now(timezone.utc).isoformat()
+        chunks = chunk(content, title=title)
+        n = len(chunks)
 
-    vectors = embed([t for t, _ in records])
-    client.upsert(
-        COLLECTION,
-        points=[
-            PointStruct(id=str(uuid.uuid4()), vector=v, payload={"text": t, "source": s})
-            for (t, s), v in zip(records, vectors)
-        ],
-    )
-    print(f"Upserted {len(records)} chunks from {len(files)} file(s) into '{COLLECTION}'.")
+        # Idempotent per-file clobber: delete this file's existing points
+        # (by exact source match) before reinserting. Also self-migrates
+        # old {text, source}-only points to the new rich payload.
+        client.delete(
+            collection_name=COLLECTION,
+            points_selector=Filter(must=[
+                FieldCondition(key="source", match=MatchValue(value=str(f))),
+            ]),
+        )
+
+        vectors = embed([c.text for c in chunks])
+        client.upsert(
+            COLLECTION,
+            points=[
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=v,
+                    payload={
+                        "text": c.text,
+                        "source": str(f),
+                        "title": title,
+                        "section": c.section,
+                        "chunk_index": i,
+                        "total_chunks": n,
+                        "doc_hash": doc_hash,
+                        "ingested_at": ingested_at,
+                    },
+                )
+                for i, (c, v) in enumerate(zip(chunks, vectors))
+            ],
+        )
+        total_points += n
+        print(f"  {f}: {n} chunks (clobbered old, upserted new)")
+
+    print(f"Ingested {total_points} chunks from {len(files)} file(s) into '{COLLECTION}'.")
 
 
 if __name__ == "__main__":
