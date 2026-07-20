@@ -60,6 +60,7 @@ from "knows its training data" into "knows *your* data" — without retraining.
 #+caption: Local LLM Hub — request and tracing flow (every LiteLLM call is traced to Phoenix via OTel).
 [[file:assets/architecture.png]]
 All ports bind to =127.0.0.1= — nothing is exposed beyond the host.
+Re-render after topology changes: =uv run assets/render_architecture.py= (matplotlib; the script is committed alongside the PNG).
 The web UI ([[http://127.0.0.1:8080][http://127.0.0.1:8080]]) is the browser entry point: sign up (first user becomes admin), pick a model, and chat. Open WebUI routes every request through LiteLLM, so chats hit the same master-key gate and Phoenix tracing as direct API calls — no separate Ollama shortcut.
 
 ** Directory Structure
