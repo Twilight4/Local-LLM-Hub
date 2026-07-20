@@ -75,6 +75,11 @@ services:
       OPENAI_API_BASE_URL: http://litellm:4000/v1
       OPENAI_API_KEY: ${LITELLM_MASTER_KEY}  # compose-substituted from .env at parse time
       ENABLE_OLLAMA_API: "false"
+      # Disable builtin tools (tasks, timestamps, KB search...) by default.
+      # Open WebUI injects them into every chat via the function-calling prompt;
+      # small models like llama3.2 (3B) hallucinate tool-call JSON instead of
+      # chatting. Re-enable per-model in the admin UI for models that can handle it.
+      DEFAULT_MODEL_METADATA: '{"capabilities":{"builtin_tools":false}}'
       # Auth: default ENABLE_SIGNUP=true. First browser signup becomes admin;
       # disable signup afterward in Admin Panel > Settings to lock to one account.
     depends_on:
