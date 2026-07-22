@@ -7,7 +7,7 @@
 Run:  uv run assets/render_architecture.py
 
 Layout:
-  Top row    — main chat path: Browser → Open WebUI → LiteLLM → Ollama → GPU
+  Top row    — main chat path: Browser → Open WebUI → LiteLLM → Ollama → GPU (optional)
   Mid-left   — second entry point: curl/SDK → LiteLLM (master key)
   Mid-center — tracing side-channel: LiteLLM → Phoenix (OTel/OTLP)
   Bottom row — RAG layer: AI agent → rag/mcp_server → Qdrant ← rag/ingest
@@ -66,12 +66,12 @@ box(1.3, 6.8, 2.0, 0.85, "Browser", "user", C["entry"])
 box(3.8, 6.8, 2.2, 0.85, "Open WebUI", ":8080", C["webui"])
 box(6.8, 6.8, 2.0, 0.85, "LiteLLM", ":4000 · master key", C["gateway"])
 box(9.5, 6.8, 2.0, 0.85, "Ollama", ":11434", C["engine"])
-box(12.3, 6.8, 2.4, 0.85, "AMD GPU", "RX 9070 XT · Vulkan", C["gpu"])
+box(12.3, 6.8, 2.4, 0.85, "AMD GPU (optional)", "RX 9070 XT · Vulkan", C["gpu"])
 
 arrow(2.3, 6.8, 2.7, 6.8)
 arrow(4.9, 6.8, 5.8, 6.8)
 arrow(7.8, 6.8, 8.5, 6.8)
-arrow(10.5, 6.8, 11.1, 6.8)
+arrow(10.5, 6.8, 11.1, 6.8, label="GPU override", style="--", color="#999")
 
 # --- Tracing side-channel (LiteLLM → Phoenix) ---
 box(6.8, 4.3, 2.0, 0.85, "Phoenix", ":6006 · traces", C["obs"])
@@ -97,7 +97,7 @@ ax.text(7, 7.85, "Local LLM Hub — request & tracing flow",
         ha="center", va="center", fontsize=13.5, fontweight="bold")
 ax.text(7, 7.5, "every LiteLLM call is traced to Phoenix via OTel  ·  "
         "Open WebUI routes through LiteLLM (not Ollama directly)  ·  "
-        "all ports bind to 127.0.0.1",
+        "all ports bind to 127.0.0.1  ·  CPU by default (GPU optional)",
         ha="center", va="center", fontsize=8, color="#666", style="italic")
 
 plt.tight_layout()
