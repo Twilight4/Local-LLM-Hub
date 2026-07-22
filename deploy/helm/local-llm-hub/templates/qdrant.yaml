@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "llh.name" . }}
+      app.kubernetes.io/component: qdrant
+  template:
+    metadata:
+      labels:
+        {{- include "llh.labels" . | nindent 8 }}
+        app.kubernetes.io/component: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: {{ include "llh.image" .Values.images.qdrant }}
+          ports:
+            - containerPort: 6333
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          readinessProbe:
+            tcpSocket: { port: 6333 }
+            periodSeconds: 10
+            failureThreshold: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: qdrant-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-data
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.qdrant.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "llh.name" . }}
+    app.kubernetes.io/component: qdrant
+  ports:
+    - port: 6333
+      targetPort: 6333
+      nodePort: 30333
