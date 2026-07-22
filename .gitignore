@@ -1,5 +1,9 @@
 # Secrets — never commit
 .env
+deploy/helm/local-llm-hub/values.local.yaml
 
 # Python bytecode
 __pycache__/
+
+# planning docs — local reference only, never committed
+docs/superpowers/

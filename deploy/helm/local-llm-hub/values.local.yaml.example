@@ -1,0 +1,3 @@
+# Copy to values.local.yaml (gitignored) and fill the real master key.
+# Generate:  openssl rand -hex 32   (prefix with sk-)
+masterKey: "sk-REPLACE_WITH_64_HEX_CHARS"
