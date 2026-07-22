@@ -19,19 +19,18 @@ Everything runs in Docker, on =127.0.0.1= only.
 - [[#from-local-to-production-environment-aws-bedrock][From Local to Production Environment (AWS Bedrock)]]
 - [[#deploy-infrastructure][Deploy Infrastructure]]
   - [[#prerequisites][Prerequisites]]
-  - [[#how-to-deploy][How to deploy]]
-  - [[#using-the-api][Using the API]]
-  - [[#teardown][Teardown]]
+  - [[#deploy-on-docker][Deploy on Docker]]
+  - [[#deploy-on-kubernetes-kind][Deploy on Kubernetes (kind)]]
   - [[#troubleshooting][Troubleshooting]]
+- [[#using-the-api][Using the API]]
+  - [[#endpoints][Endpoints]]
+  - [[#observability-with-phoenix][Observability with Phoenix]]
 - [[#retrieval-and-mcp][Retrieval and MCP]]
   - [[#how-it-works][How it works]]
   - [[#index-your-documents][Index your documents]]
   - [[#the-mcp-tool][The MCP tool]]
   - [[#register-in-a-coding-agent][Register in a coding agent]]
   - [[#use-it-from-an-agent][Use it from an agent]]
-- [[#observability-with-phoenix][Observability with Phoenix]]
-  - [[#how-tracing-works][How tracing works]]
-  - [[#view-traces][View traces]]
 - [[#testing-in-ci][Testing in CI]]
   - [[#what-the-test-checks][What the test checks]]
   - [[#running-locally][Running locally]]
@@ -85,8 +84,15 @@ local-llm-hub/
 │   ├── ingest.py           token+heading-aware chunk → embed → upsert (idempotent per file)
 │   ├── mcp_server.py       MCP server exposing the `search-internal-docs` tool (stdio)
 │   └── test_chunk.py       chunker self-check (uv run rag/test_chunk.py)
+├── deploy/
+│   ├── kind-config.yaml      kind cluster def + localhost→NodePort mappings
+│   ├── Makefile              create / install / upgrade / verify / logs / destroy
+│   └── helm/local-llm-hub/   the Helm chart (Chart.yaml, values.yaml, templates/*)
 └── assets/
-    └── architecture.png   the architecture diagram (see Architecture)
+    ├── architecture.png        logical request & tracing flow (see Architecture)
+    ├── render_architecture.py  renders architecture.png  (uv run)
+    ├── k8s_topology.png        K8s deployment topology (see Deploy on Kubernetes)
+    └── render_k8s_topology.py  renders k8s_topology.png  (uv run)
 #+end_example
 
 ** Tech Stack
@@ -147,8 +153,9 @@ and backups.
   #+begin_src bash
   curl -LsSf https://astral.sh/uv/install.sh | sh   # standalone binary (recommended) — or: paru -S uv
   #+end_src
+- Tools for kubernetes deployment: =kind=, =helm=, =kubectl=
 
-** How to deploy
+** Deploy on Docker
 1. *Create your secrets file* from the template:
    #+begin_src bash
    cd local-llm-hub/
@@ -185,10 +192,83 @@ and backups.
 
 6. *Test it* — see [[*Using the API][Using the API]].
 
-** Using the API
-The gateway is OpenAI-compatible. Authenticate with the master key from =.env=.
+7. Teardown:
+   #+begin_src bash
+   docker compose down        # stop + remove containers (keeps the data volumes)
+   docker compose down -v     # also delete ollama-data + qdrant-data + phoenix-data
+   #+end_src
 
-*Chat:*
+** Deploy on Kubernetes (kind)
+The same five-service stack runs on a local [[https://kind.sigs.k8s.io/][kind]] (Kubernetes-in-Docker) cluster via a Helm chart under =deploy/helm/local-llm-hub/=.
+
+*Note:* Ollama runs *CPU-only* in this cluster — AMD GPU passthrough under kind is out of scope here. (The Docker Compose stack keeps its optional GPU override.)
+
+#+caption: Deployment topology on kind — Pods, NodePort Services, PVCs, initContainer ordering, and the post-install model-pull Job. Ollama is internal-only (no localhost mapping).
+[[file:assets/k8s_topology.png]]
+
+*** Quick start
+Run everything from the repo's =deploy/= directory:
+
+#+begin_src shell
+cd deploy
+cp helm/local-llm-hub/values.local.yaml.example helm/local-llm-hub/values.local.yaml
+KEY=sk-$(openssl rand -hex 32); sed -i "s/sk-REPLACE_WITH_64_HEX_CHARS/$KEY/" helm/local-llm-hub/values.local.yaml
+make create install
+make verify
+#+end_src
+
+=make install= blocks until every pod is =Ready= (Helm =--wait=), then runs a post-install =Job= that pulls the Ollama models (=llama3.2= ~2 GB + =nomic-embed-text=) into the =ollama-models= volume. First run takes several minutes while the models download.
+
+*** What gets deployed
+- A single-node kind cluster named =local-llm-hub=, namespace =local-llm-hub=.
+- Five single-replica (=replicas: 1=) Deployments: =ollama=, =litellm=, =qdrant=, =phoenix=, =open-webui=.
+- Four PVCs: =ollama-models=, =qdrant-data=, =phoenix-data=, =open-webui-data=.
+- A =masterKey= Secret (=local-llm-hub-secrets=) and a LiteLLM =ConfigMap= (=litellm-config=).
+- Every container image is pinned by digest (=repo:tag@sha256:…=), so deploys are reproducible regardless of tag drift.
+
+*** Localhost access
+Four services are mapped from the kind node to the host:
+
+| Service    | Port | URL                   |
+|------------+------+-----------------------|
+| Open WebUI | 8080 | http://127.0.0.1:8080 |
+| LiteLLM    | 4000 | http://127.0.0.1:4000 |
+| Phoenix    | 6006 | http://127.0.0.1:6006 |
+| Qdrant     | 6333 | http://127.0.0.1:6333 |
+
+*Ollama (11434) is internal-only.* The host already runs a native =ollama.service= on =127.0.0.1:11434=, so the cluster's Ollama is /not/ exposed on localhost — it is reachable only inside the cluster (ClusterIP =ollama:11434=). For ad-hoc debugging from the host:
+
+#+begin_src shell
+kubectl -n local-llm-hub port-forward svc/ollama 11434:11434
+#+end_src
+
+*** Lifecycle targets
+All targets run from the =deploy/= directory (=cd deploy && make …=):
+
+| Target       | Action                                                      |
+|--------------+-------------------------------------------------------------|
+| =make create=  | Create the kind cluster (=local-llm-hub=)                     |
+| =make install= | =helm install= with =--wait= (pods Ready) + post-install models |
+| =make upgrade= | =helm upgrade= with =--wait=                                    |
+| =make verify=  | Wait for pods, then liveliness + one-token chat check       |
+| =make logs=    | Tail the last 80 lines from every service pod               |
+| =make destroy= | Uninstall the release and delete the kind cluster           |
+
+** Troubleshooting
+- *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
+- *Open WebUI replies with a JSON tool-call blob instead of chatting* (e.g. ={"type":"function","name":"update_task",...}=): Open WebUI injects its builtin tools (tasks, timestamps, knowledge search...) into every chat via a function-calling prompt; small models like =llama3.2= (3B) hallucinate a tool call instead of replying. =DEFAULT_MODEL_METADATA= in the compose disables builtin tools by default (=capabilities.builtin_tools: false=). To re-enable tools for a model that can handle them (8B+), edit per-model capabilities in Admin Panel → Workspace → Models.
+- *Ollama is slow:* it's running on CPU — the default, for portability. To use an AMD GPU, apply the override (=docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d=), then confirm via =docker compose logs ollama | grep -i vulkan=.
+- *GPU override fails (=no such file or directory= on =/dev/dri= or =/dev/kfd=):* you're on a host without AMD GPU device nodes. Stay on CPU (default) or move to a host with an AMD GPU + the =vulkan-radeon= driver. NVIDIA needs a different override (see the =docker-compose.gpu.yml= header); not provided.
+- =permission denied= *on a render node*: add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
+- *Embeddings 404 / model not found:* you forgot =ollama pull nomic-embed-text=, or the =nomic-embed-text= entry is missing from =litellm_config.yaml= (restart litellm after editing).
+- *MCP tool doesn't appear:* ensure =uv= is on the *client's* =PATH= (GUI apps often need the absolute =uv= path from =command -v uv=), the script path is absolute, and =.env= is readable (=LITELLM_MASTER_KEY=). Full per-client setup in [[#register-in-a-coding-agent][Register in a coding agent]].
+
+
+* Using the API
+The gateway is OpenAI-compatible. This section covers programmatic / scripted access, which the =rag/= scripts depend on. Authenticate with the master key from =.env=.
+
+** Endpoints
+*** Chat
 #+begin_src bash
 # Positive path — a real completion
 curl -s http://127.0.0.1:4000/v1/chat/completions \
@@ -202,7 +282,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/v1/chat/completio
   -d '{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}'
 #+end_src
 
-*Streaming* (chunks arrive as the LLM generates them — like ChatGPT):
+*** Streaming (chunks arrive as the LLM generates them — like ChatGPT)
 #+begin_src bash
 curl -N http://127.0.0.1:4000/v1/chat/completions \
   -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
@@ -211,7 +291,7 @@ curl -N http://127.0.0.1:4000/v1/chat/completions \
 #+end_src
 =-N= disables curl's output buffering so each chunk prints as it arrives. Each line is =data: {chunk-json}=, and the stream ends with =data: [DONE]=.
 
-*Embeddings* (used by the RAG scripts):
+*** Embeddings (used by the RAG scripts)
 #+begin_src bash
 curl -s http://127.0.0.1:4000/v1/embeddings \
   -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
@@ -228,20 +308,27 @@ docker compose logs ollama | grep -iE 'gpu|vulkan|amd'    # i.e. AMD Radeon RX 9
 #+end_src
 (Only meaningful when the GPU override is applied; CPU-mode logs show no GPU line.)
 
-** Teardown
+** Observability with Phoenix
+Every request through LiteLLM is traced in [[https://github.com/Arize-ai/phoenix][Phoenix]] — open-source, self-hosted LLM observability in a *single container* — via OpenTelemetry. Inspect prompts, responses, token counts, latency, and estimated cost per call.
+
+*** How tracing works
+#+begin_example
+LiteLLM ── success_callback: ["otel"] ──OTLP/HTTP──▶ Phoenix :6006/v1/traces
+#+end_example
+- =litellm_config.yaml= sets =success_callback: ["otel"]=.
+- =docker-compose.yml=, on the =litellm= service: =OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006= and =OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf=.
+- Phoenix v18 ingests OTLP at =http://phoenix:6006/v1/traces= (it shares the web port; 4318 is *not* used).
+- Traces persist in Phoenix's embedded SQLite (the =phoenix-data= volume); auth is off (=PHOENIX_ENABLE_AUTH=false=) for local single-user use.
+
+*** View traces
+Open http://127.0.0.1:6006 in a browser → *Traces*. Make any request and a new trace appears (model, input, output, tokens, latency):
 #+begin_src bash
-docker compose down        # stop + remove containers (keeps the data volumes)
-docker compose down -v     # also delete ollama-data + qdrant-data + phoenix-data
+curl -s http://127.0.0.1:4000/v1/chat/completions \
+  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"hello"}]}'
 #+end_src
 
-** Troubleshooting
-- *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
-- *Open WebUI replies with a JSON tool-call blob instead of chatting* (e.g. ={"type":"function","name":"update_task",...}=): Open WebUI injects its builtin tools (tasks, timestamps, knowledge search...) into every chat via a function-calling prompt; small models like =llama3.2= (3B) hallucinate a tool call instead of replying. =DEFAULT_MODEL_METADATA= in the compose disables builtin tools by default (=capabilities.builtin_tools: false=). To re-enable tools for a model that can handle them (8B+), edit per-model capabilities in Admin Panel → Workspace → Models.
-- *Ollama is slow:* it's running on CPU — the default, for portability. To use an AMD GPU, apply the override (=docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d=), then confirm via =docker compose logs ollama | grep -i vulkan=.
-- *GPU override fails (=no such file or directory= on =/dev/dri= or =/dev/kfd=):* you're on a host without AMD GPU device nodes. Stay on CPU (default) or move to a host with an AMD GPU + the =vulkan-radeon= driver. NVIDIA needs a different override (see the =docker-compose.gpu.yml= header); not provided.
-- =permission denied= *on a render node*: add =group_add: ["video", "render"]= to the =ollama= service (not needed on this host — render nodes are world-writable).
-- *Embeddings 404 / model not found:* you forgot =ollama pull nomic-embed-text=, or the =nomic-embed-text= entry is missing from =litellm_config.yaml= (restart litellm after editing).
-- *MCP tool doesn't appear:* ensure =uv= is on the *client's* =PATH= (GUI apps often need the absolute =uv= path from =command -v uv=), the script path is absolute, and =.env= is readable (=LITELLM_MASTER_KEY=). Full per-client setup in [[#register-in-a-coding-agent][Register in a coding agent]].
 
 * Retrieval and MCP
 Turn the LLM from "knows its training data" into "knows your documents" via RAG.
@@ -353,26 +440,6 @@ In any agent session (OMP, Claude Code, Cursor, …), ask something grounded in 
 #+end_quote
 The agent calls the tool, retrieves the relevant passages from Qdrant, and answers from your documents.
 
-* Observability with Phoenix
-Every request through LiteLLM is traced in [[https://github.com/Arize-ai/phoenix][Phoenix]] — open-source, self-hosted LLM observability in a *single container* — via OpenTelemetry. Inspect prompts, responses, token counts, latency, and estimated cost per call.
-
-** How tracing works
-#+begin_example
-LiteLLM ── success_callback: ["otel"] ──OTLP/HTTP──▶ Phoenix :6006/v1/traces
-#+end_example
-- =litellm_config.yaml= sets =success_callback: ["otel"]=.
-- =docker-compose.yml=, on the =litellm= service: =OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006= and =OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf=.
-- Phoenix v18 ingests OTLP at =http://phoenix:6006/v1/traces= (it shares the web port; 4318 is *not* used).
-- Traces persist in Phoenix's embedded SQLite (the =phoenix-data= volume); auth is off (=PHOENIX_ENABLE_AUTH=false=) for local single-user use.
-
-** View traces
-Open http://127.0.0.1:6006 in a browser → *Traces*. Make any request and a new trace appears (model, input, output, tokens, latency):
-#+begin_src bash
-curl -s http://127.0.0.1:4000/v1/chat/completions \
-  -H "Authorization: Bearer $(grep LITELLM_MASTER_KEY .env | cut -d= -f2)" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"llama3.2","messages":[{"role":"user","content":"hello"}]}'
-#+end_src
 
 * Testing in CI
 Every change to the LiteLLM config, the compose files, =.env.example=, or
@@ -425,6 +492,7 @@ triggers the chat test above; =.github/workflows/dependabot-auto-merge.yml=
 auto-merges on green CI and leaves failures open for manual review.
 Requires "Allow auto-merge" enabled in repo Settings → General → Pull Requests.
 
+
 * Roadmap
 - [X] Infrastructure Setup (Docker Compose)
 - [X] API Gateway & Routing (LiteLLM)
@@ -437,6 +505,6 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] Streaming responses: =stream: true= support for chat completions.
 - [X] RAG: token-aware chunking + Qdrant metadata filters (=source=, =section=) for better retrieval.
 - [X] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser ([[http://127.0.0.1:8080][http://127.0.0.1:8080]]; first signup = admin).
-- [ ] Kubernetes: package the five-service stack as a Helm chart under =deploy/helm/=.
+- [X] Kubernetes: package the five-service stack as a Helm chart under =deploy/helm/=.
 - [ ] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
 - [ ] Platform observability: =kube-prometheus-stack= + LiteLLM/Ollama =ServiceMonitors= + Grafana dashboards.
