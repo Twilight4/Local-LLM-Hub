@@ -1,0 +1,11 @@
+local-llm-hub installed in namespace {{ .Release.Namespace }}.
+
+Services (localhost via kind extraPortMappings):
+  Open WebUI : http://localhost:8080   (first signup = admin)
+  LiteLLM    : http://localhost:4000   (master-key gated)
+  Phoenix    : http://localhost:6006
+  Qdrant     : http://localhost:6333
+  Ollama     : internal only (ClusterIP ollama:11434) — not on localhost; debug via: kubectl -n {{ .Release.Namespace }} port-forward svc/ollama 11434:11434
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/ollama deploy/litellm

@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "llh.name" . }}
+      app.kubernetes.io/component: litellm
+  template:
+    metadata:
+      labels:
+        {{- include "llh.labels" . | nindent 8 }}
+        app.kubernetes.io/component: litellm
+    spec:
+      initContainers:
+        - name: wait-ollama
+          image: {{ include "llh.image" .Values.images.litellm }}
+          command: [sh, -c]
+          args:
+            - |
+              until python -c "import urllib.request; urllib.request.urlopen('http://ollama:11434', timeout=2)" 2>/dev/null; do
+                echo "waiting for ollama"; sleep 2
+              done
+      containers:
+        - name: litellm
+          image: {{ include "llh.image" .Values.images.litellm }}
+          args: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+          ports:
+            - containerPort: 4000
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: local-llm-hub-secrets
+                  key: LITELLM_MASTER_KEY
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.litellm.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ .Values.litellm.otel.protocol | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.litellm.otel.serviceName | quote }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+          startupProbe:
+            exec:
+              command: [sh, -c, "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3)\""]
+            periodSeconds: 15
+            failureThreshold: 12
+          readinessProbe:
+            exec:
+              command: [sh, -c, "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3)\""]
+            periodSeconds: 15
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "llh.name" . }}
+    app.kubernetes.io/component: litellm
+  ports:
+    - port: 4000
+      targetPort: 4000
+      nodePort: 30400

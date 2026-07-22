@@ -1,0 +1,20 @@
+# kind cluster for local-llm-hub.
+# extraPortMappings forwards localhost:<appPort> -> the node's <nodePort>,
+# so localhost:4000/8080/6006/6333 behave like docker compose.
+# Ollama (11434) is intentionally NOT mapped here: the host runs a native
+# ollama.service on 11434. In K8s Ollama is internal-only (LiteLLM reaches it
+# via ClusterIP ollama:11434); debug ad-hoc with: kubectl port-forward svc/ollama 11434:11434
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: local-llm-hub
+nodes:
+  - role: control-plane   # single node; control-plane is schedulable in kind
+    extraPortMappings:
+      - containerPort: 30400
+        hostPort: 4000       # litellm
+      - containerPort: 30333
+        hostPort: 6333       # qdrant
+      - containerPort: 30006
+        hostPort: 6006       # phoenix
+      - containerPort: 30080
+        hostPort: 8080       # open-webui

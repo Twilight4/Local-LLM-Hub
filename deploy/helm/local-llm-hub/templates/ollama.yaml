@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "llh.name" . }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "llh.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: {{ include "llh.image" .Values.images.ollama }}
+          ports:
+            - containerPort: 11434
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          startupProbe:
+            httpGet: { path: /, port: 11434 }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /, port: 11434 }
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.ollama.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "llh.name" . }}
+    app.kubernetes.io/component: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+      nodePort: 31434
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-pull
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pull
+          image: {{ include "llh.image" .Values.images.ollama }}
+          env:
+            - name: OLLAMA_HOST
+              value: ollama:11434
+          command: [sh, -c]
+          args:
+            - |
+              {{- range .Values.ollama.models }}
+              echo "pulling {{ . }}"
+              ollama pull {{ . }}
+              {{- end }}

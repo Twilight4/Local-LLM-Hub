@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "llh.name" . }}
+      app.kubernetes.io/component: phoenix
+  template:
+    metadata:
+      labels:
+        {{- include "llh.labels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix
+    spec:
+      containers:
+        - name: phoenix
+          image: {{ include "llh.image" .Values.images.phoenix }}
+          env:
+            - name: PHOENIX_ENABLE_AUTH
+              value: {{ .Values.phoenix.enableAuth | quote }}
+            - name: PHOENIX_PORT
+              value: "6006"
+          ports:
+            - containerPort: 6006
+          volumeMounts:
+            - name: data
+              mountPath: /mnt/data
+          readinessProbe:
+            httpGet: { path: /, port: 6006 }
+            periodSeconds: 15
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: phoenix-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: phoenix-data
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.phoenix.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "llh.name" . }}
+    app.kubernetes.io/component: phoenix
+  ports:
+    - port: 6006
+      targetPort: 6006
+      nodePort: 30006

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "llh.name" . }}
+      app.kubernetes.io/component: open-webui
+  template:
+    metadata:
+      labels:
+        {{- include "llh.labels" . | nindent 8 }}
+        app.kubernetes.io/component: open-webui
+    spec:
+      initContainers:
+        - name: wait-litellm
+          image: {{ include "llh.image" .Values.images.openWebui }}
+          command: [sh, -c]
+          args:
+            - |
+              until python3 -c "import urllib.request; urllib.request.urlopen('http://litellm:4000/health/liveliness', timeout=2)" 2>/dev/null; do
+                echo "waiting for litellm"; sleep 2
+              done
+      containers:
+        - name: open-webui
+          image: {{ include "llh.image" .Values.images.openWebui }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OPENAI_API_BASE_URL
+              value: http://litellm:4000/v1
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: local-llm-hub-secrets
+                  key: LITELLM_MASTER_KEY
+            - name: ENABLE_OLLAMA_API
+              value: "false"
+            - name: DEFAULT_MODEL_METADATA
+              value: {{ .Values.openWebui.defaultModelMetadata | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+          startupProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 15
+            failureThreshold: 12
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 15
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: open-webui-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-webui-data
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.openWebui.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  labels:
+    {{- include "llh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "llh.name" . }}
+    app.kubernetes.io/component: open-webui
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
