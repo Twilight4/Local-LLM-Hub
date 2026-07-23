@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-llm-hub
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Twilight4/Local-LLM-Hub.git
+    targetRevision: main
+    path: deploy/helm/local-llm-hub
+    helm:
+      {}                      # renders committed values.yaml only; masterKey="" -> Secret skipped
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-llm-hub
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
