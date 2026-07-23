@@ -52,7 +52,7 @@ ARGOCD_NS       := argocd
 gitops-install:
 	@echo "==> installing ArgoCD $(ARGOCD_VERSION)"
 	kubectl create namespace $(ARGOCD_NS) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -n $(ARGOCD_NS) -f $(ARGOCD_MANIFEST)
+	kubectl apply --server-side --force-conflicts -n $(ARGOCD_NS) -f $(ARGOCD_MANIFEST)
 	kubectl -n $(ARGOCD_NS) wait deploy/argocd-server --for=condition=Available --timeout=300s
 
 gitops-apply:
@@ -61,7 +61,7 @@ gitops-apply:
 
 gitops-secret:
 	@echo "==> injecting master key (out-of-band; ArgoCD-ignored)"
-	@until kubectl get namespace $(NS) >/dev/null 2>&1; do echo "  waiting for ns $(NS)"; sleep 3; done
+	@n=0; until kubectl get namespace $(NS) >/dev/null 2>&1; do n=$$((n+1)); [ $$n -ge 60 ] && { echo "  ns $(NS) not ready after ~180s - did ArgoCD sync?"; exit 1; }; echo "  waiting for ns $(NS)"; sleep 3; done
 	KEY=$$(grep masterKey $(LOCAL) | sed 's/.*"\(.*\)".*/\1/'); \
 	kubectl -n $(NS) create secret generic local-llm-hub-secrets \
 	  --from-literal=LITELLM_MASTER_KEY="$$KEY" -o yaml --dry-run=client | \
@@ -75,7 +75,8 @@ gitops-verify:
 	kubectl -n $(NS) wait --for=condition=Ready pod --all --timeout=600s
 	@echo "==> app checks"
 	curl -sf localhost:4000/health/liveliness && echo "  litellm OK"
-	kubectl -n $(NS) exec deploy/ollama -- ollama list | grep -q llama3.2 && echo "  ollama models OK"
+	@echo "==> waiting for ollama models (post-install hook is async)"
+	@n=0; until kubectl -n $(NS) exec deploy/ollama -- ollama list 2>/dev/null | grep -q llama3.2; do n=$$((n+1)); [ $$n -ge 60 ] && { echo "  ollama models MISSING (llama3.2)"; exit 1; }; sleep 5; done; echo "  ollama models OK"
 	curl -sf localhost:6333 >/dev/null && echo "  qdrant OK"
 	curl -sf localhost:6006 >/dev/null && echo "  phoenix OK"
 	curl -sf localhost:8080/health && echo "  open-webui OK"
