@@ -272,7 +272,7 @@ declared state in =main=. The master-key =Secret= is applied out-of-band and is
 *not* managed by ArgoCD, so it never lands in git. The ArgoCD dashboard:
 
 #+begin_src shell
-make argocd-ui               # http://localhost:8081
+make argocd-ui               # https://localhost:8081
 #+end_src
 
 ** Troubleshooting

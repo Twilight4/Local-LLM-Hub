@@ -91,6 +91,6 @@ gitops-verify:
 gitops-bootstrap: gitops-install gitops-apply
 
 argocd-ui:
-	@echo "==> ArgoCD UI: http://localhost:8081  (CTRL-C to stop)"
+	@echo "==> ArgoCD UI: https://localhost:8081  (CTRL-C to stop)"
 	@echo "    admin password: kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 	kubectl -n $(ARGOCD_NS) port-forward svc/argocd-server 8081:443
