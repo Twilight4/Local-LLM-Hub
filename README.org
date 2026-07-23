@@ -21,6 +21,7 @@ Everything runs in Docker, on =127.0.0.1= only.
   - [[#prerequisites][Prerequisites]]
   - [[#deploy-on-docker][Deploy on Docker]]
   - [[#deploy-on-kubernetes-kind][Deploy on Kubernetes (kind)]]
+  - [[#gitops-argocd][GitOps (ArgoCD)]]
   - [[#troubleshooting][Troubleshooting]]
 - [[#using-the-api][Using the API]]
   - [[#endpoints][Endpoints]]
@@ -253,6 +254,26 @@ All targets run from the =deploy/= directory (=cd deploy && make …=):
 | =make verify=  | Wait for pods, then liveliness + one-token chat check       |
 | =make logs=    | Tail the last 80 lines from every service pod               |
 | =make destroy= | Uninstall the release and delete the kind cluster           |
+
+** GitOps (ArgoCD)
+Instead of =make install= (direct Helm), ArgoCD reconciles the chart from =main=:
+
+#+begin_src shell
+cd deploy
+make destroy && make create
+make gitops-bootstrap        # install ArgoCD (pinned v3.4.5) + apply the Application
+make gitops-secret           # inject the master key out-of-band (kept out of git)
+make gitops-verify           # Synced + Healthy; chat works
+#+end_src
+
+ArgoCD syncs the chart anonymously (the repo is public) with =prune= +
+=selfHeal=, so any manual drift (=kubectl scale=, edits) is reverted to the
+declared state in =main=. The master-key =Secret= is applied out-of-band and is
+*not* managed by ArgoCD, so it never lands in git. The ArgoCD dashboard:
+
+#+begin_src shell
+make argocd-ui               # http://localhost:8081
+#+end_src
 
 ** Troubleshooting
 - *LiteLLM returns 401 with the right key:* =.env= is missing or the key is mistyped. With no master key set, LiteLLM runs keyless (insecure) — so a mismatch reads as unauthorized, not as "no key".
@@ -506,5 +527,5 @@ Requires "Allow auto-merge" enabled in repo Settings → General → Pull Reques
 - [X] RAG: token-aware chunking + Qdrant metadata filters (=source=, =section=) for better retrieval.
 - [X] Web UI: Open WebUI container pointed at LiteLLM for chat from a browser ([[http://127.0.0.1:8080][http://127.0.0.1:8080]]; first signup = admin).
 - [X] Kubernetes: package the five-service stack as a Helm chart under =deploy/helm/=.
-- [ ] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
+- [X] GitOps: ArgoCD =Application= auto-syncs the chart from =main= to the cluster.
 - [ ] Platform observability: =kube-prometheus-stack= + LiteLLM/Ollama =ServiceMonitors= + Grafana dashboards.
