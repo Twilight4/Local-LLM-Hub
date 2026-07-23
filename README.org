@@ -87,13 +87,16 @@ local-llm-hub/
 │   └── test_chunk.py       chunker self-check (uv run rag/test_chunk.py)
 ├── deploy/
 │   ├── kind-config.yaml      kind cluster def + localhost→NodePort mappings
-│   ├── Makefile              create / install / upgrade / verify / logs / destroy
+│   ├── Makefile              helm lifecycle (create/install/upgrade/verify/logs/destroy) + gitops-* targets
+│   ├── gitops/application.yaml  ArgoCD Application CR (auto-syncs the chart from main)
 │   └── helm/local-llm-hub/   the Helm chart (Chart.yaml, values.yaml, templates/*)
 └── assets/
     ├── architecture.png        logical request & tracing flow (see Architecture)
     ├── render_architecture.py  renders architecture.png  (uv run)
     ├── k8s_topology.png        K8s deployment topology (see Deploy on Kubernetes)
-    └── render_k8s_topology.py  renders k8s_topology.png  (uv run)
+    ├── render_k8s_topology.py  renders k8s_topology.png  (uv run)
+    ├── gitops_topology.png     GitOps control flow (see GitOps (ArgoCD))
+    └── render_gitops_topology.py  renders gitops_topology.png  (uv run)
 #+end_example
 
 ** Tech Stack
@@ -256,6 +259,9 @@ All targets run from the =deploy/= directory (=cd deploy && make …=):
 | =make destroy= | Uninstall the release and delete the kind cluster           |
 
 ** GitOps (ArgoCD)
+#+caption: GitOps control flow — git main → ArgoCD (ns argocd) auto-syncs the chart (prune + selfHeal) into ns local-llm-hub; the master-key Secret is applied out-of-band (never in git, invisible to ArgoCD); manual drift is self-healed.
+[[file:assets/gitops_topology.png]]
+
 Instead of =make install= (direct Helm), ArgoCD reconciles the chart from =main=:
 
 #+begin_src shell
