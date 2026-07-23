@@ -7,3 +7,5 @@ __pycache__/
 
 # planning docs — local reference only, never committed
 docs/superpowers/
+# SDD progress ledger (scratch)
+.superpowers/
